@@ -563,6 +563,99 @@ public class KDTree<T> where T : ITreeItem<T>
         return false;
     }
 
+    /// <summary>
+    /// Attempts to retrieve the first element within an optional inclusive <paramref name="lowerLimit"/> and an optional <paramref name="upperLimit"/>. 
+    /// The upper limit is inclusive if <paramref name="upperLimitInclusive"/> is true otherwise the upper limit is exclusive.
+    /// </summary>
+    /// <param name="lowerLimit">Optional inclusive lower limit</param>
+    /// <param name="upperLimit">Optional upper limit</param>
+    /// <param name="upperLimitInclusive">The upper limit is inclusive if true otherwise the upper limit is exclusive</param>
+    /// <returns>true if an element is found otherwise false</returns>
+    public bool TryGetFirst(Option<T> lowerLimit, Option<T> upperLimit, bool upperLimitInclusive, ref T value)
+    {
+        if (lowerLimit.HasValue && upperLimit.HasValue)
+        {
+            for (int dimension = 0; dimension < DimensionCount; dimension++)
+            {
+                int comparisonResult = lowerLimit.Value.CompareDimensionTo(upperLimit.Value, dimension);
+
+                if (comparisonResult > 0)
+                {
+                    return false;
+                }
+            }
+        }
+
+        return TryGetFirst(ref lowerLimit, ref upperLimit, upperLimitInclusive, 0, Count - 1, 0, ref value);
+    }
+
+    internal bool TryGetFirst(ref Option<T> lowerLimit, ref Option<T> upperLimit, bool upperLimitInclusive, int leftIndex, int rightIndex, int dimension, ref T value)
+    {
+        int midIndex = (rightIndex + leftIndex) / 2;
+
+        ref T midValue = ref Values[midIndex];
+        bool dirty = Dirties[midIndex];
+
+        if (!lowerLimit.HasValue || IsKeyGreaterThanOrEqualToLimit(midValue, lowerLimit.Value, DimensionCount))
+        {
+            if (upperLimitInclusive)
+            {
+                if (!upperLimit.HasValue || IsKeyLessThanOrEqualToLimit(midValue, upperLimit.Value, DimensionCount))
+                {
+                    value = midValue;
+                    return true;
+                }
+            }
+            else
+            {
+                if (!upperLimit.HasValue || IsKeyLessThanLimit(midValue, upperLimit.Value, DimensionCount))
+                {
+                    value = midValue;
+                    return true;
+                }
+            }
+        }
+
+        int nextDimension = (dimension + 1) % DimensionCount;
+
+        int? upperLimitComparisonResult = upperLimit.HasValue ? upperLimit.Value.CompareDimensionTo(midValue, dimension) : null;
+
+        if (!upperLimitComparisonResult.HasValue || upperLimitComparisonResult.Value >= 0)
+        {
+            int nextLeftIndex = midIndex + 1;
+            int nextRightIndex = rightIndex;
+
+            if (nextRightIndex >= nextLeftIndex)
+            {
+                bool found = TryGetFirst(ref lowerLimit, ref upperLimit, upperLimitInclusive, nextLeftIndex, nextRightIndex, nextDimension, ref value);
+                if (found)
+                {
+                    return true;
+                }
+            }
+        }
+
+        int? lowerLimitComparisonResult = lowerLimit.HasValue ? lowerLimit.Value.CompareDimensionTo(midValue, dimension) : null;
+
+        if (!lowerLimitComparisonResult.HasValue || lowerLimitComparisonResult <= 0
+            || (dirty && upperLimitComparisonResult == 0))
+        {
+            int nextLeftIndex = leftIndex;
+            int nextRightIndex = midIndex - 1;
+
+            if (nextRightIndex >= nextLeftIndex)
+            {
+                bool found = TryGetFirst(ref lowerLimit, ref upperLimit, upperLimitInclusive, nextLeftIndex, nextRightIndex, nextDimension, ref value);
+                if (found)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
 }
 
 [DebuggerDisplay("Count: {Count}")]
@@ -597,7 +690,7 @@ public class MetricKDTree<T> : KDTree<T> where T : IMetricTreeItem<T>
         GetNearestNeighbor(ref value, ref currentNeighbor, ref minSqaredDistance, 0, Count - 1, 0);
 
         neighbor = currentNeighbor.Value;
-        squaredDistance = minSqaredDistance.HasValue ? minSqaredDistance.Value : default;
+        squaredDistance = minSqaredDistance ?? default;
         bool result = currentNeighbor.HasValue;
 
         return result;

@@ -470,6 +470,80 @@ public class BKDTree<T> where T : ITreeItem<T>
 
         return false;
     }
+
+    /// <summary>
+    /// Attempts to retrieve the first element within an optional inclusive <paramref name="lowerLimit"/> and an optional <paramref name="upperLimit"/>. 
+    /// The upper limit is inclusive if <paramref name="upperLimitInclusive"/> is true otherwise the upper limit is exclusive.
+    /// </summary>
+    /// <param name="lowerLimit">Optional inclusive lower limit</param>
+    /// <param name="upperLimit">Optional upper limit</param>
+    /// <param name="upperLimitInclusive">The upper limit is inclusive if true otherwise the upper limit is exclusive</param>
+    /// <returns>true if an element is found otherwise false</returns>
+    public bool TryGetFirst(Option<T> lowerLimit, Option<T> upperLimit, bool upperLimitInclusive, ref T value)
+    {
+        try
+        {
+            Interlocked.Add(ref _EnumerationCount, 1);
+
+            if (lowerLimit.HasValue && upperLimit.HasValue)
+            {
+                for (int dimension = 0; dimension < DimensionCount; dimension++)
+                {
+                    int comparisonResult = lowerLimit.Value.CompareDimensionTo(upperLimit.Value, dimension);
+
+                    if (comparisonResult > 0)
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            for (int i = 0; i < BaseBlockCount; i++)
+            {
+                T currentValue = BaseBlock[i];
+                if (!lowerLimit.HasValue || KDTree<T>.IsKeyGreaterThanOrEqualToLimit(currentValue, lowerLimit.Value, DimensionCount))
+                {
+                    if (upperLimitInclusive)
+                    {
+                        if (!upperLimit.HasValue || KDTree<T>.IsKeyLessThanOrEqualToLimit(currentValue, upperLimit.Value, DimensionCount))
+                        {
+                            value = currentValue;
+                            return true;
+                        }
+                    }
+                    else
+                    {
+                        if (!upperLimit.HasValue || KDTree<T>.IsKeyLessThanLimit(currentValue, upperLimit.Value, DimensionCount))
+                        {
+                            value = currentValue;
+                            return true;
+                        }
+                    }
+                }
+            }
+
+            for (int i = 0; i < Trees.Length; i++)
+            {
+                KDTree<T> tree = Trees[i];
+                if (tree is null)
+                {
+                    continue;
+                }
+
+                bool found = tree.TryGetFirst(lowerLimit, upperLimit, upperLimitInclusive, ref value);
+                if (found)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        finally
+        {
+            Interlocked.Add(ref _EnumerationCount, -1);
+        }
+    }
 }
 
 [DebuggerDisplay("Count: {Count}")]

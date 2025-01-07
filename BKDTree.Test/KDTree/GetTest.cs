@@ -50,6 +50,18 @@ public class GetTest
         expectedRange.Sort((left, right) => left.X < right.X ? -1 : left.X > right.X ? 1 : left.Y < right.Y ? -1 : left.Y > right.Y ? 1 : 0);
         actualRange.Sort((left, right) => left.X < right.X ? -1 : left.X > right.X ? 1 : left.Y < right.Y ? -1 : left.Y > right.Y ? 1 : 0);
 
+        Point firstPoint = default;
+        bool hasFirstPoint = tree.TryGetFirst(lowerLimit, upperLimit, true, ref firstPoint);
+        if (expectedRange.Count > 0)
+        {
+            Assert.That(hasFirstPoint, Is.EqualTo(true));
+            Assert.That(expectedRange.Contains(firstPoint), Is.EqualTo(true));
+        }
+        else
+        {
+            Assert.That(hasFirstPoint, Is.EqualTo(false));
+        }
+
         CollectionAssert.AreEqual(expectedRange, actualRange);
     }
 

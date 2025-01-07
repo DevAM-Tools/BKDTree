@@ -6,7 +6,7 @@ A BKDTree and an KDTree allow storing any queying of multidimensional data. Non 
 
 For nearest neighbor queries there are dediated variants like `MetricBKDTree<T>` and `MetricKDTree<T>`. As nearest neighbor queries require to calculate euclidean distance between values `T` must implement `IMetricTreeItem<in T>`.
 
-<img src="./icon.png" width="256" height="256"/>
+![icon](https://raw.githubusercontent.com/CodeDevAM/BKDTree/main/icon.png)
 
 ## Usage
 Items of type `T` that shall be stored in a `BKDTree<T>` or a `KDTree<T>` must implement the interface `ITreeItem<T>` with its method `CompareDimensionTo()`.
