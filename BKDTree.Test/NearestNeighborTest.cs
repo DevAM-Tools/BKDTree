@@ -7,7 +7,7 @@ namespace BKDTree.Test;
 public class NearestNeighborTest
 {
     [TestCaseSource(typeof(NearestNeighborTest), nameof(TestCases))]
-    public void GetHearestNeighbor(int count, int seed)
+    public void GetHearestNeighbor(int count, int seed, bool parallel)
     {
         Random random = new(seed);
 
@@ -19,7 +19,7 @@ public class NearestNeighborTest
             return point;
         }).ToArray();
 
-        MetricBKDTree<Point> tree = new(2);
+        MetricBKDTree<Point> tree = new(2, parallel: parallel);
 
         for (int i = 0; i < count; i++)
         {
@@ -65,12 +65,16 @@ public class NearestNeighborTest
         {
             int[] counts = [10, 500];
             int[] seeds = Enumerable.Range(0, 10000).ToArray();
+            bool[] parallels = [false, true];
 
             foreach (int count in counts)
             {
                 foreach (int seed in seeds)
                 {
-                    yield return new TestCaseData(count, seed);
+                    foreach (bool parallel in parallels)
+                    {
+                        yield return new TestCaseData(count, seed, parallel);
+                    }
                 }
             }
         }

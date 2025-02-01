@@ -9,7 +9,7 @@ namespace BKDTree.Test.KDTree;
 public class CreateTest
 {
     [TestCaseSource(typeof(CreateTest), nameof(TestCases))]
-    public void Create(int count, Pattern xPattern, Pattern yPattern, int seed)
+    public void Create(int count, Pattern xPattern, Pattern yPattern, int seed, bool parallel)
     {
         Random random = new(seed);
 
@@ -23,7 +23,7 @@ public class CreateTest
 
         Dictionary<Point, Point[]> groupedPoints = points.GroupBy(x => x).ToDictionary(x => x.Key, x => x.ToArray());
 
-        KDTree<Point> tree = new(2, points);
+        KDTree<Point> tree = new(2, points, parallel);
 
         Assert.That(tree.Count, Is.EqualTo(points.Length));
 
@@ -66,6 +66,7 @@ public class CreateTest
                 Pattern.ReverseAlternating,
             ];
             int[] seeds = [0, 1, 2];
+            bool[] parallels = [false, true];
 
             foreach (int count in counts)
             {
@@ -80,7 +81,11 @@ public class CreateTest
                                 continue;
                             }
 
-                            yield return new TestCaseData(count, xPattern, yPattern, seeds[i]);
+                            foreach (bool parallel in parallels)
+                            {
+                                yield return new TestCaseData(count, xPattern, yPattern, seeds[i], parallel);
+                            }
+
                         }
                     }
                 }

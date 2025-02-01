@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace BKDTree;
 
@@ -15,7 +17,12 @@ public class KDTree<T> where T : ITreeItem<T>
 
     public int Count => Values.Length;
 
-    public KDTree(int dimensionCount, IEnumerable<T> values)
+    private class Box(int value)
+    {
+        public volatile int Value = value;
+    }
+
+    public KDTree(int dimensionCount, IEnumerable<T> values, bool parallel = false)
     {
         if (dimensionCount <= 0)
         {
@@ -32,10 +39,11 @@ public class KDTree<T> where T : ITreeItem<T>
             comparers[dimension] = new(dimension);
         }
 
-        Build(0, Values.Length - 1, 0, comparers);
+        Box threadCount = new(1);
+        Build(0, Values.Length - 1, 0, comparers, threadCount, parallel ? Environment.ProcessorCount : 0);
     }
 
-    internal KDTree(int dimensionCount, T[][] values, DimensionalComparer<T>[] comparers)
+    internal KDTree(int dimensionCount, T[][] values, DimensionalComparer<T>[] comparers, bool parallel = false)
     {
         if (dimensionCount <= 0)
         {
@@ -59,18 +67,43 @@ public class KDTree<T> where T : ITreeItem<T>
         Values = new T[count];
         Dirties = new bool[count];
 
-        int index = 0;
-        for (int i = 0; i < values.Length; i++)
+        if (parallel)
         {
-            T[] currentValues = values[i];
-            Array.Copy(currentValues, 0, Values, index, currentValues.Length);
-            index += currentValues.Length;
+            IEnumerable<(int I, int Index)> GetIndex()
+            {
+                int index = 0;
+                for (int i = 0; i < values.Length; i++)
+                {
+                    yield return (i, index);
+                    T[] currentValues = values[i] ?? throw new ArgumentNullException(nameof(values));
+                    index += currentValues.Length;
+                }
+            }
+
+            GetIndex()
+                .AsParallel()
+                .ForAll(parameter =>
+                {
+                    T[] currentValues = values[parameter.I];
+                    Array.Copy(currentValues, 0, Values, parameter.Index, currentValues.Length);
+                });
+        }
+        else
+        {
+            int index = 0;
+            for (int i = 0; i < values.Length; i++)
+            {
+                T[] currentValues = values[i];
+                Array.Copy(currentValues, 0, Values, index, currentValues.Length);
+                index += currentValues.Length;
+            }
         }
 
-        Build(0, Values.Length - 1, 0, comparers);
+        Box threadCount = new(1);
+        Build(0, Values.Length - 1, 0, comparers, threadCount, parallel ? Environment.ProcessorCount : 0);
     }
 
-    private void Build(int leftIndex, int rightIndex, int dimension, DimensionalComparer<T>[] comparers)
+    private void Build(int leftIndex, int rightIndex, int dimension, DimensionalComparer<T>[] comparers, Box threadCount, int upperLimit)
     {
         int count = rightIndex + 1 - leftIndex;
 
@@ -86,20 +119,65 @@ public class KDTree<T> where T : ITreeItem<T>
 
         int nextDimension = (dimension + 1) % DimensionCount;
 
-        int nextLeftIndex = leftIndex;
-        int nextRightIndex = midIndex - 1;
+        int leftNextLeftIndex = leftIndex;
+        int leftNextRightIndex = midIndex - 1;
 
-        if (nextRightIndex >= nextLeftIndex)
+        Task leftTask = null;
+        if (leftNextRightIndex >= leftNextLeftIndex)
         {
-            Build(nextLeftIndex, nextRightIndex, nextDimension, comparers);
+            if (upperLimit > 0 && DoInParallel(threadCount, upperLimit))
+            {
+                leftTask = Task.Run(() =>
+                {
+                    Build(leftNextLeftIndex, leftNextRightIndex, nextDimension, comparers, threadCount, upperLimit);
+                });
+            }
+            else
+            {
+                Build(leftNextLeftIndex, leftNextRightIndex, nextDimension, comparers, threadCount, upperLimit);
+            }
         }
 
-        nextLeftIndex = midIndex + 1;
-        nextRightIndex = rightIndex;
+        int rightNextLeftIndex = midIndex + 1;
+        int rightNextRightIndex = rightIndex;
 
-        if (nextRightIndex >= nextLeftIndex)
+        Task rightTask = null;
+        if (rightNextRightIndex >= rightNextLeftIndex)
         {
-            Build(nextLeftIndex, nextRightIndex, nextDimension, comparers);
+            if (upperLimit > 0 && DoInParallel(threadCount, upperLimit))
+            {
+                rightTask = Task.Run(() =>
+                {
+                    Build(rightNextLeftIndex, rightNextRightIndex, nextDimension, comparers, threadCount, upperLimit);
+                });
+            }
+            else
+            {
+                Build(rightNextLeftIndex, rightNextRightIndex, nextDimension, comparers, threadCount, upperLimit);
+            }
+        }
+
+        leftTask?.Wait();
+        rightTask?.Wait();
+
+    }
+
+    private bool DoInParallel(Box threadCount, int upperLimit)
+    {
+        int currentThreadCount = 0;
+        while (true)
+        {
+            currentThreadCount = threadCount.Value;
+            if (currentThreadCount >= upperLimit)
+            {
+                return false;
+            }
+
+            int previousThreadCount = Interlocked.CompareExchange(ref threadCount.Value, currentThreadCount + 1, currentThreadCount);
+            if (previousThreadCount == currentThreadCount)
+            {
+                return true;
+            }
         }
     }
 
@@ -661,11 +739,11 @@ public class KDTree<T> where T : ITreeItem<T>
 [DebuggerDisplay("Count: {Count}")]
 public class MetricKDTree<T> : KDTree<T> where T : IMetricTreeItem<T>
 {
-    public MetricKDTree(int dimensionCount, IEnumerable<T> values) : base(dimensionCount, values)
+    public MetricKDTree(int dimensionCount, IEnumerable<T> values, bool parallel = false) : base(dimensionCount, values, parallel)
     {
     }
 
-    internal MetricKDTree(int dimensionCount, T[][] values, DimensionalComparer<T>[] comparers) : base(dimensionCount, values, comparers)
+    internal MetricKDTree(int dimensionCount, T[][] values, DimensionalComparer<T>[] comparers, bool parallel = false) : base(dimensionCount, values, comparers, parallel)
     {
     }
 

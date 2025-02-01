@@ -10,6 +10,7 @@ public class BKDTree<T> where T : ITreeItem<T>
 {
     public const int DefaultBlockSize = 128;
     internal readonly int BlockSize;
+    internal readonly bool Parallel;
     internal readonly int DimensionCount;
     internal T[] BaseBlock;
     internal int BaseBlockCount;
@@ -22,7 +23,7 @@ public class BKDTree<T> where T : ITreeItem<T>
 
     public long Count { get; private set; }
 
-    public BKDTree(int dimensionCount, int blockSize = DefaultBlockSize)
+    public BKDTree(int dimensionCount, int blockSize = DefaultBlockSize, bool parallel = false)
     {
         if (dimensionCount <= 0)
         {
@@ -30,6 +31,7 @@ public class BKDTree<T> where T : ITreeItem<T>
         }
 
         DimensionCount = (byte)dimensionCount;
+        Parallel = parallel;
 
         if (blockSize < 2)
         {
@@ -48,7 +50,7 @@ public class BKDTree<T> where T : ITreeItem<T>
 
     protected virtual KDTree<T> CreateNewTree(T[][] values)
     {
-        KDTree<T> result = new(DimensionCount, values, Comparers);
+        KDTree<T> result = new(DimensionCount, values, Comparers, Parallel);
         return result;
     }
 
@@ -549,13 +551,13 @@ public class BKDTree<T> where T : ITreeItem<T>
 [DebuggerDisplay("Count: {Count}")]
 public class MetricBKDTree<T> : BKDTree<T> where T : IMetricTreeItem<T>
 {
-    public MetricBKDTree(int dimensionCount, int blockSize = DefaultBlockSize) : base(dimensionCount, blockSize)
+    public MetricBKDTree(int dimensionCount, int blockSize = DefaultBlockSize, bool parallel = false) : base(dimensionCount, blockSize, parallel)
     {
     }
 
     protected override KDTree<T> CreateNewTree(T[][] values)
     {
-        KDTree<T> result = new MetricKDTree<T>(DimensionCount, values, Comparers);
+        KDTree<T> result = new MetricKDTree<T>(DimensionCount, values, Comparers, Parallel);
         return result;
     }
 

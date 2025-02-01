@@ -9,7 +9,7 @@ namespace BKDTree.Test;
 public class GetTest
 {
     [TestCaseSource(typeof(GetTest), nameof(TestCases))]
-    public void GetRange(int blockSize, int count, Pattern xPattern, Pattern yPattern, int seed, double? lowerLimitShareX, double? lowerLimitShareY, double? upperLimitShareX, double? upperLimitShareY)
+    public void GetRange(int blockSize, int count, Pattern xPattern, Pattern yPattern, int seed, bool parallel, double? lowerLimitShareX, double? lowerLimitShareY, double? upperLimitShareX, double? upperLimitShareY)
     {
         Random random = new(seed);
 
@@ -21,7 +21,7 @@ public class GetTest
             return point;
         }).ToArray();
 
-        BKDTree<Point> tree = new(2, blockSize);
+        BKDTree<Point> tree = new(2, blockSize, parallel);
 
         Point minPoint = points[0];
         Point maxPoint = points[0];
@@ -78,6 +78,7 @@ public class GetTest
                 Pattern.Const,
             ];
             int[] seeds = [0, 1];
+            bool[] parallels = [false, true];
             double?[] limitShares = [null, -1.0, 0.0, 0.5, 1.0, 2.0];
 
             foreach (int blockSize in blockSizes)
@@ -94,19 +95,24 @@ public class GetTest
                                 {
                                     continue;
                                 }
-                                foreach (double? lowerLimitShareX in limitShares)
+
+                                foreach (bool parallel in parallels)
                                 {
-                                    foreach (double? lowerLimitShareY in limitShares)
+                                    foreach (double? lowerLimitShareX in limitShares)
                                     {
-                                        foreach (double? upperLimitShareX in limitShares)
+                                        foreach (double? lowerLimitShareY in limitShares)
                                         {
-                                            foreach (double? upperLimitShareY in limitShares)
+                                            foreach (double? upperLimitShareX in limitShares)
                                             {
-                                                yield return new TestCaseData(blockSize, count, xPattern, yPattern, seeds[i], lowerLimitShareX, lowerLimitShareY, upperLimitShareX, upperLimitShareY);
+                                                foreach (double? upperLimitShareY in limitShares)
+                                                {
+                                                    yield return new TestCaseData(blockSize, count, xPattern, yPattern, seeds[i], parallel, lowerLimitShareX, lowerLimitShareY, upperLimitShareX, upperLimitShareY);
+                                                }
                                             }
                                         }
                                     }
                                 }
+
                             }
                         }
                     }

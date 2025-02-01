@@ -9,7 +9,7 @@ namespace BKDTree.Test;
 public class CreateTest
 {
     [TestCaseSource(typeof(CreateTest), nameof(TestCases))]
-    public void Create(int blockSize, int count, Pattern xPattern, Pattern yPattern, int seed)
+    public void Create(int blockSize, int count, Pattern xPattern, Pattern yPattern, int seed, bool parallel)
     {
         Random random = new(seed);
 
@@ -23,7 +23,7 @@ public class CreateTest
 
         Dictionary<Point, Point[]> groupedPoints = points.GroupBy(x => x).ToDictionary(x => x.Key, x => x.ToArray());
 
-        BKDTree<Point> tree = new(2, blockSize);
+        BKDTree<Point> tree = new(2, blockSize, parallel);
         for (int i = 0; i < count; i++)
         {
             Point point = points[i];
@@ -77,6 +77,8 @@ public class CreateTest
                 Pattern.ReverseAlternating,
             ];
             int[] seeds = [0, 1, 2];
+            bool[] parallels = [false, true];
+
             foreach (int blockSize in blockSizes)
             {
                 foreach (int count in counts)
@@ -92,7 +94,10 @@ public class CreateTest
                                     continue;
                                 }
 
-                                yield return new TestCaseData(blockSize, count, xPattern, yPattern, seeds[i]);
+                                foreach (bool parallel in parallels)
+                                {
+                                    yield return new TestCaseData(blockSize, count, xPattern, yPattern, seeds[i], parallel);
+                                }
                             }
                         }
                     }

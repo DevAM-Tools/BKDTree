@@ -9,10 +9,10 @@ namespace BKDTree.Benchmark;
 [EventPipeProfiler(EventPipeProfile.CpuSampling)]
 public class Benchmark
 {
-    [Params(1_000_000)]
+    [Params(1_000_000, 10_000_000)]
     public int N;
 
-    [Params(8, 64, 128, 256, 512, 1024)]
+    [Params(128, 256, 512, 1024)]
     public int BlockSize;
 
     [Params(Pattern.Random, Pattern.Increasing)]
@@ -47,9 +47,9 @@ public class Benchmark
             return point;
         }).ToArray();
 
-        KDTree = new(2, Points);
+        KDTree = new(2, Points, true);
 
-        BKDTree = new(2, BlockSize);
+        BKDTree = new(2, BlockSize, true);
 
         foreach (Point point in Points)
         {
@@ -57,16 +57,32 @@ public class Benchmark
         }
     }
 
-    [Benchmark]
+    [Benchmark(Baseline = true)]
     public void CreateKd()
     {
-        KDTree<Point> kdTree = new(2, Points);
+        KDTree<Point> kdTree = new(2, Points, false);
+    }
+
+    [Benchmark]
+    public void CreateKdParallel()
+    {
+        KDTree<Point> kdTree = new(2, Points, true);
     }
 
     [Benchmark]
     public void CreateBkd()
     {
-        BKDTree<Point> bkdTree = new(2, BlockSize);
+        BKDTree<Point> bkdTree = new(2, BlockSize, false);
+        foreach (Point point in Points)
+        {
+            bkdTree.Insert(point);
+        }
+    }
+
+    [Benchmark]
+    public void CreateBkdParallel()
+    {
+        BKDTree<Point> bkdTree = new(2, BlockSize, true);
         foreach (Point point in Points)
         {
             bkdTree.Insert(point);

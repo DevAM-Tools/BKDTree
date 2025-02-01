@@ -1,5 +1,4 @@
-﻿using BenchmarkDotNet.Jobs;
-
+﻿using BKDTree.Test;
 
 namespace BKDTree.Benchmark;
 
@@ -7,13 +6,12 @@ internal class Program
 {
     private static void Main(string[] args)
     {
-#if true
+#if false
         BenchmarkDotNet.Configs.ManualConfig config = BenchmarkDotNet.Configs.ManualConfig.CreateMinimumViable()
             .AddJob(Job.ShortRun.WithEvaluateOverhead(false));
 
         BenchmarkDotNet.Running.BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly).Run(args, config);
-#endif
-#if false
+#else
         int count = 10_000_000;
         Point[] points = new Point[count];
         System.Random random = new(7);
@@ -25,7 +23,7 @@ internal class Program
             points[i] = point;
         }
 
-        BKDTree<Point> tree = new(2);
+        BKDTree<Point> tree = new(2, parallel: true);
 
         System.Diagnostics.Stopwatch watch = System.Diagnostics.Stopwatch.StartNew();
 
