@@ -23,6 +23,10 @@ public class KDTree<T> where T : ITreeItem<T>
     }
 
     public KDTree(int dimensionCount, IEnumerable<T> values, bool parallel = false)
+        : this(dimensionCount, values, parallel ? Environment.ProcessorCount : 1)
+    {
+    }
+    public KDTree(int dimensionCount, IEnumerable<T> values, int maxThreadCount)
     {
         if (dimensionCount <= 0)
         {
@@ -40,10 +44,16 @@ public class KDTree<T> where T : ITreeItem<T>
         }
 
         Box threadCount = new(1);
-        Build(0, Values.Length - 1, 0, comparers, threadCount, parallel ? Environment.ProcessorCount : 0);
+        maxThreadCount = Math.Max(1, Math.Min(Environment.ProcessorCount, maxThreadCount));
+        Build(0, Values.Length - 1, 0, comparers, threadCount, maxThreadCount);
     }
 
     internal KDTree(int dimensionCount, T[][] values, DimensionalComparer<T>[] comparers, bool parallel = false)
+        : this(dimensionCount, values, comparers, parallel ? Environment.ProcessorCount : 1)
+    {
+    }
+
+    internal KDTree(int dimensionCount, T[][] values, DimensionalComparer<T>[] comparers, int maxThreadCount)
     {
         if (dimensionCount <= 0)
         {
@@ -67,7 +77,8 @@ public class KDTree<T> where T : ITreeItem<T>
         Values = new T[count];
         Dirties = new bool[count];
 
-        if (parallel)
+        maxThreadCount = Math.Max(1, Math.Min(Environment.ProcessorCount, maxThreadCount));
+        if (maxThreadCount > 1)
         {
             IEnumerable<(int I, int Index)> GetIndex()
             {
@@ -82,6 +93,7 @@ public class KDTree<T> where T : ITreeItem<T>
 
             GetIndex()
                 .AsParallel()
+                .WithDegreeOfParallelism(maxThreadCount)
                 .ForAll(parameter =>
                 {
                     T[] currentValues = values[parameter.I];
@@ -100,10 +112,10 @@ public class KDTree<T> where T : ITreeItem<T>
         }
 
         Box threadCount = new(1);
-        Build(0, Values.Length - 1, 0, comparers, threadCount, parallel ? Environment.ProcessorCount : 0);
+        Build(0, Values.Length - 1, 0, comparers, threadCount, maxThreadCount);
     }
 
-    private void Build(int leftIndex, int rightIndex, int dimension, DimensionalComparer<T>[] comparers, Box threadCount, int upperLimit)
+    private void Build(int leftIndex, int rightIndex, int dimension, DimensionalComparer<T>[] comparers, Box threadCount, int maxThreadCount)
     {
         int count = rightIndex + 1 - leftIndex;
 
@@ -125,16 +137,17 @@ public class KDTree<T> where T : ITreeItem<T>
         Task leftTask = null;
         if (leftNextRightIndex >= leftNextLeftIndex)
         {
-            if (upperLimit > 0 && DoInParallel(threadCount, upperLimit))
+            int nextSpanSize = leftNextRightIndex - leftNextLeftIndex;
+            if (maxThreadCount > 0 && nextSpanSize >= 512 && DoInParallel(threadCount, maxThreadCount))
             {
                 leftTask = Task.Run(() =>
                 {
-                    Build(leftNextLeftIndex, leftNextRightIndex, nextDimension, comparers, threadCount, upperLimit);
+                    Build(leftNextLeftIndex, leftNextRightIndex, nextDimension, comparers, threadCount, maxThreadCount);
                 });
             }
             else
             {
-                Build(leftNextLeftIndex, leftNextRightIndex, nextDimension, comparers, threadCount, upperLimit);
+                Build(leftNextLeftIndex, leftNextRightIndex, nextDimension, comparers, threadCount, maxThreadCount);
             }
         }
 
@@ -144,16 +157,17 @@ public class KDTree<T> where T : ITreeItem<T>
         Task rightTask = null;
         if (rightNextRightIndex >= rightNextLeftIndex)
         {
-            if (upperLimit > 0 && DoInParallel(threadCount, upperLimit))
+            int nextSpanSize = rightNextRightIndex - rightNextLeftIndex;
+            if (maxThreadCount > 0 && nextSpanSize >= 512 && DoInParallel(threadCount, maxThreadCount))
             {
                 rightTask = Task.Run(() =>
                 {
-                    Build(rightNextLeftIndex, rightNextRightIndex, nextDimension, comparers, threadCount, upperLimit);
+                    Build(rightNextLeftIndex, rightNextRightIndex, nextDimension, comparers, threadCount, maxThreadCount);
                 });
             }
             else
             {
-                Build(rightNextLeftIndex, rightNextRightIndex, nextDimension, comparers, threadCount, upperLimit);
+                Build(rightNextLeftIndex, rightNextRightIndex, nextDimension, comparers, threadCount, maxThreadCount);
             }
         }
 
@@ -169,13 +183,13 @@ public class KDTree<T> where T : ITreeItem<T>
         }
     }
 
-    private bool DoInParallel(Box threadCount, int upperLimit)
+    private bool DoInParallel(Box threadCount, int maxThreadCount)
     {
         int currentThreadCount = 0;
         while (true)
         {
             currentThreadCount = threadCount.Value;
-            if (currentThreadCount >= upperLimit)
+            if (currentThreadCount >= maxThreadCount)
             {
                 return false;
             }
@@ -746,11 +760,18 @@ public class KDTree<T> where T : ITreeItem<T>
 [DebuggerDisplay("Count: {Count}")]
 public class MetricKDTree<T> : KDTree<T> where T : IMetricTreeItem<T>
 {
-    public MetricKDTree(int dimensionCount, IEnumerable<T> values, bool parallel = false) : base(dimensionCount, values, parallel)
+    public MetricKDTree(int dimensionCount, IEnumerable<T> values, bool parallel = false)
+        : base(dimensionCount, values, parallel ? Environment.ProcessorCount : 1)
     {
     }
 
-    internal MetricKDTree(int dimensionCount, T[][] values, DimensionalComparer<T>[] comparers, bool parallel = false) : base(dimensionCount, values, comparers, parallel)
+    public MetricKDTree(int dimensionCount, IEnumerable<T> values, int maxThreadCount)
+        : base(dimensionCount, values, maxThreadCount)
+    {
+    }
+
+    internal MetricKDTree(int dimensionCount, T[][] values, DimensionalComparer<T>[] comparers, int maxThreadCount)
+        : base(dimensionCount, values, comparers, maxThreadCount)
     {
     }
 

@@ -1,4 +1,4 @@
-﻿using BKDTree.Test;
+﻿using BenchmarkDotNet.Jobs;
 
 namespace BKDTree.Benchmark;
 
@@ -6,7 +6,7 @@ internal class Program
 {
     private static void Main(string[] args)
     {
-#if false
+#if true
         BenchmarkDotNet.Configs.ManualConfig config = BenchmarkDotNet.Configs.ManualConfig.CreateMinimumViable()
             .AddJob(Job.ShortRun.WithEvaluateOverhead(false));
 
