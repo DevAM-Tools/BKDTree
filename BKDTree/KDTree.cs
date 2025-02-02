@@ -157,9 +157,16 @@ public class KDTree<T> where T : ITreeItem<T>
             }
         }
 
-        leftTask?.Wait();
-        rightTask?.Wait();
-
+        if (leftTask is not null)
+        {
+            leftTask.Wait();
+            Interlocked.Decrement(ref threadCount.Value);
+        }
+        if (rightTask is not null)
+        {
+            rightTask.Wait();
+            Interlocked.Decrement(ref threadCount.Value);
+        }
     }
 
     private bool DoInParallel(Box threadCount, int upperLimit)

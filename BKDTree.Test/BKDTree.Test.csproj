@@ -9,10 +9,10 @@
     <Authors>DevAM</Authors>
     <Company>DevAM</Company>
     <Product>BKDTree</Product>
-    <Version>1.3.0</Version>
+    <Version>1.3.1</Version>
+	  <AssemblyVersion>1.3.1</AssemblyVersion>
+	  <FileVersion>1.3.1</FileVersion>
     <Copyright>Copyright (c) 2024 DevAM. All Rights Reserved.</Copyright>
-    <AssemblyVersion>1.3.0</AssemblyVersion>
-    <FileVersion>1.3.0</FileVersion>
 
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
