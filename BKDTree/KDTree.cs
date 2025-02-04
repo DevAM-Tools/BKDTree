@@ -26,6 +26,7 @@ public class KDTree<T> where T : ITreeItem<T>
         : this(dimensionCount, values, parallel ? Environment.ProcessorCount : 1)
     {
     }
+
     public KDTree(int dimensionCount, IEnumerable<T> values, int maxThreadCount)
     {
         if (dimensionCount <= 0)
@@ -48,12 +49,12 @@ public class KDTree<T> where T : ITreeItem<T>
         Build(0, Values.Length - 1, 0, comparers, threadCount, maxThreadCount);
     }
 
-    internal KDTree(int dimensionCount, T[][] values, DimensionalComparer<T>[] comparers, bool parallel = false)
+    internal KDTree(int dimensionCount, IList<Segment<T>> values, DimensionalComparer<T>[] comparers, bool parallel = false)
         : this(dimensionCount, values, comparers, parallel ? Environment.ProcessorCount : 1)
     {
     }
 
-    internal KDTree(int dimensionCount, T[][] values, DimensionalComparer<T>[] comparers, int maxThreadCount)
+    internal KDTree(int dimensionCount, IList<Segment<T>> values, DimensionalComparer<T>[] comparers, int maxThreadCount)
     {
         if (dimensionCount <= 0)
         {
@@ -68,10 +69,14 @@ public class KDTree<T> where T : ITreeItem<T>
         }
 
         long count = 0L;
-        for (int i = 0; i < values.Length; i++)
+        for (int i = 0; i < values.Count; i++)
         {
-            T[] currentValues = values[i] ?? throw new ArgumentNullException(nameof(values));
-            count += currentValues.Length;
+            Segment<T> segment = values[i];
+            if (!(segment.Values is T[] || segment.Values is List<T>))
+            {
+                throw new ArgumentException("Segment must be either of type T[] or List<T>.");
+            }
+            count += segment.Length;
         }
 
         Values = new T[count];
@@ -80,14 +85,14 @@ public class KDTree<T> where T : ITreeItem<T>
         maxThreadCount = Math.Max(1, Math.Min(Environment.ProcessorCount, maxThreadCount));
         if (maxThreadCount > 1)
         {
-            IEnumerable<(int I, int Index)> GetIndex()
+            IEnumerable<(Segment<T> Segment, int Index)> GetIndex()
             {
                 int index = 0;
-                for (int i = 0; i < values.Length; i++)
+                for (int i = 0; i < values.Count; i++)
                 {
-                    yield return (i, index);
-                    T[] currentValues = values[i] ?? throw new ArgumentNullException(nameof(values));
-                    index += currentValues.Length;
+                    Segment<T> segment = values[i];
+                    yield return (segment, index);
+                    index += segment.Length;
                 }
             }
 
@@ -96,18 +101,31 @@ public class KDTree<T> where T : ITreeItem<T>
                 .WithDegreeOfParallelism(maxThreadCount)
                 .ForAll(parameter =>
                 {
-                    T[] currentValues = values[parameter.I];
-                    Array.Copy(currentValues, 0, Values, parameter.Index, currentValues.Length);
+                    if (parameter.Segment.Values is T[] array)
+                    {
+                        Array.Copy(array, parameter.Segment.Offset, Values, parameter.Index, parameter.Segment.Length);
+                    }
+                    else if (parameter.Segment.Values is List<T> list)
+                    {
+                        list.CopyTo(parameter.Segment.Offset, Values, parameter.Index, parameter.Segment.Length);
+                    }
                 });
         }
         else
         {
             int index = 0;
-            for (int i = 0; i < values.Length; i++)
+            for (int i = 0; i < values.Count; i++)
             {
-                T[] currentValues = values[i];
-                Array.Copy(currentValues, 0, Values, index, currentValues.Length);
-                index += currentValues.Length;
+                Segment<T> segment = values[i];
+                if (segment.Values is T[] array)
+                {
+                    Array.Copy(array, segment.Offset, Values, index, segment.Length);
+                }
+                else if (segment.Values is List<T> list)
+                {
+                    list.CopyTo(segment.Offset, Values, index, segment.Length);
+                }
+                index += segment.Length;
             }
         }
 
@@ -185,10 +203,9 @@ public class KDTree<T> where T : ITreeItem<T>
 
     private bool DoInParallel(Box threadCount, int maxThreadCount)
     {
-        int currentThreadCount = 0;
         while (true)
         {
-            currentThreadCount = threadCount.Value;
+            int currentThreadCount = threadCount.Value;
             if (currentThreadCount >= maxThreadCount)
             {
                 return false;
@@ -357,7 +374,7 @@ public class KDTree<T> where T : ITreeItem<T>
     }
 
     /// <summary>
-    /// Gets all matching values. Since <see cref="KDTree{T}"/> does allow duplicates this may be more than one. Consider using <see cref="DoForEach(T, Func{T, bool}"/> if performance is critical.
+    /// Gets all matching values. Since <see cref="KDTree{T}"/> does allow duplicates this may be more than one. Consider using <see cref="DoForEach(T, Func{T, bool})"/> if performance is critical.
     /// </summary>
     /// <param name="value"></param>
     /// <returns></returns>
@@ -418,7 +435,7 @@ public class KDTree<T> where T : ITreeItem<T>
     }
 
     /// <summary>
-    /// Applies an <paramref name="actionAndCancelFunction"/> to every mathing values. Since <see cref="KDTree{T}"/> does allow duplicates this may be more than one. Prefer this over <see cref="Get(T)"/> in performance critical paths.
+    /// Applies an <paramref name="actionAndCancelFunction"/> to every matching values. Since <see cref="KDTree{T}"/> does allow duplicates this may be more than one. Prefer this over <see cref="Get(T)"/> in performance critical paths.
     /// </summary>
     /// <param name="value"></param>
     /// <param name="actionAndCancelFunction">Will be called for every matching value. If it returns true the iteration will be canceled.</param>
@@ -669,6 +686,7 @@ public class KDTree<T> where T : ITreeItem<T>
     /// <param name="lowerLimit">Optional inclusive lower limit</param>
     /// <param name="upperLimit">Optional upper limit</param>
     /// <param name="upperLimitInclusive">The upper limit is inclusive if true otherwise the upper limit is exclusive</param>
+    /// <param name="value">The first element within the limits</param>
     /// <returns>true if an element is found otherwise false</returns>
     public bool TryGetFirst(Option<T> lowerLimit, Option<T> upperLimit, bool upperLimitInclusive, ref T value)
     {
@@ -755,134 +773,4 @@ public class KDTree<T> where T : ITreeItem<T>
         return false;
     }
 
-}
-
-[DebuggerDisplay("Count: {Count}")]
-public class MetricKDTree<T> : KDTree<T> where T : IMetricTreeItem<T>
-{
-    public MetricKDTree(int dimensionCount, IEnumerable<T> values, bool parallel = false)
-        : base(dimensionCount, values, parallel ? Environment.ProcessorCount : 1)
-    {
-    }
-
-    public MetricKDTree(int dimensionCount, IEnumerable<T> values, int maxThreadCount)
-        : base(dimensionCount, values, maxThreadCount)
-    {
-    }
-
-    internal MetricKDTree(int dimensionCount, T[][] values, DimensionalComparer<T>[] comparers, int maxThreadCount)
-        : base(dimensionCount, values, comparers, maxThreadCount)
-    {
-    }
-
-    /// <summary>
-    /// Gets the value with the lowest euclidean distance between it and the given <paramref name="value"/>.
-    /// </summary>
-    /// <param name="value"></param>
-    /// <param name="neighbor"></param>
-    /// <param name="squaredDistance"></param>
-    /// <returns>true if a neighbor was found otherwise false</returns>
-    /// <exception cref="ArgumentNullException"></exception>
-    public bool GetNearestNeighbor(T value, out T neighbor, out double squaredDistance)
-    {
-        if (value is null)
-        {
-            throw new ArgumentNullException(nameof(value));
-        }
-
-        Option<T> currentNeighbor = default;
-        double? minSqaredDistance = default;
-
-        GetNearestNeighbor(ref value, ref currentNeighbor, ref minSqaredDistance, 0, Count - 1, 0);
-
-        neighbor = currentNeighbor.Value;
-        squaredDistance = minSqaredDistance ?? default;
-        bool result = currentNeighbor.HasValue;
-
-        return result;
-    }
-
-    internal void GetNearestNeighbor(ref T value, ref Option<T> neighbor, ref double? minSqaredDistance, int leftIndex, int rightIndex, int dimension)
-    {
-        int midIndex = (rightIndex + leftIndex) / 2;
-
-        ref T midValue = ref Values[midIndex];
-        bool dirty = Dirties[midIndex];
-
-        double squaredDistance = GetSquaredDistance(ref value, ref midValue, DimensionCount);
-
-        if (!minSqaredDistance.HasValue || squaredDistance < minSqaredDistance.Value)
-        {
-            neighbor = midValue;
-            minSqaredDistance = squaredDistance;
-        }
-
-        int nextDimension = (dimension + 1) % DimensionCount;
-        int comparisonResult = value.CompareDimensionTo(midValue, dimension);
-
-        bool wasRight = false;
-        bool forceLeft = false;
-
-        if (comparisonResult >= 0)
-        {
-            int nextLeftIndex = midIndex + 1;
-            int nextRightIndex = rightIndex;
-
-            if (nextRightIndex >= nextLeftIndex)
-            {
-                GetNearestNeighbor(ref value, ref neighbor, ref minSqaredDistance, nextLeftIndex, nextRightIndex, nextDimension);
-
-                wasRight = true;
-            }
-
-            double limitSquaredDistance = midValue.GetDimension(dimension) - value.GetDimension(dimension);
-            limitSquaredDistance *= limitSquaredDistance;
-
-            if (!minSqaredDistance.HasValue || limitSquaredDistance < minSqaredDistance.Value)
-            {
-                forceLeft = true;
-            }
-        }
-
-        if (comparisonResult < 0 || (dirty && comparisonResult == 0) || forceLeft)
-        {
-            int nextLeftIndex = leftIndex;
-            int nextRightIndex = midIndex - 1;
-
-            if (nextRightIndex >= nextLeftIndex)
-            {
-                GetNearestNeighbor(ref value, ref neighbor, ref minSqaredDistance, nextLeftIndex, nextRightIndex, nextDimension);
-            }
-
-            if (!wasRight)
-            {
-                double squaredDistanceToLimit = midValue.GetDimension(dimension) - value.GetDimension(dimension);
-                squaredDistanceToLimit *= squaredDistanceToLimit;
-
-                if (!minSqaredDistance.HasValue || squaredDistanceToLimit < minSqaredDistance.Value)
-                {
-                    nextLeftIndex = midIndex + 1;
-                    nextRightIndex = rightIndex;
-
-                    if (nextRightIndex >= nextLeftIndex)
-                    {
-                        GetNearestNeighbor(ref value, ref neighbor, ref minSqaredDistance, nextLeftIndex, nextRightIndex, nextDimension);
-                    }
-                }
-            }
-        }
-    }
-
-    public static double GetSquaredDistance(ref T source, ref T target, int dimensionCount)
-    {
-        double result = 0;
-        for (int dimension = 0; dimension < dimensionCount; dimension++)
-        {
-            double diff = target.GetDimension(dimension) - source.GetDimension(dimension);
-
-            result += diff * diff;
-        }
-
-        return result;
-    }
 }

@@ -9,17 +9,17 @@ namespace BKDTree.Test;
 public class GetTest
 {
     [TestCaseSource(typeof(GetTest), nameof(TestCases))]
-    public void GetRange(int blockSize, int count, Pattern xPattern, Pattern yPattern, int seed, bool parallel, double? lowerLimitShareX, double? lowerLimitShareY, double? upperLimitShareX, double? upperLimitShareY)
+    public void GetRange(int blockSize, int count, Pattern xPattern, Pattern yPattern, int seed, bool parallel, bool bulkInsert, double? lowerLimitShareX, double? lowerLimitShareY, double? upperLimitShareX, double? upperLimitShareY)
     {
         Random random = new(seed);
 
-        Point[] points = Enumerable.Range(0, count).Select(value =>
+        List<Point> points = Enumerable.Range(0, count).Select(value =>
         {
             double x = Point.GenerateValue(xPattern, value, count, random);
             double y = Point.GenerateValue(yPattern, value, count, random);
             Point point = new(x, y);
             return point;
-        }).ToArray();
+        }).ToList();
 
         BKDTree<Point> tree = new(2, blockSize, parallel);
 
@@ -28,12 +28,23 @@ public class GetTest
 
         foreach (Point point in points)
         {
-            tree.Insert(point);
-
             minPoint = point.X < minPoint.X ? minPoint with { X = point.X } : minPoint;
             minPoint = point.Y < minPoint.Y ? minPoint with { Y = point.Y } : minPoint;
             maxPoint = point.X > maxPoint.X ? maxPoint with { X = point.X } : maxPoint;
             maxPoint = point.Y > maxPoint.Y ? maxPoint with { Y = point.Y } : maxPoint;
+        }
+
+        if (bulkInsert)
+        {
+            tree.Insert(points);
+        }
+        else
+        {
+            foreach (Point point in points)
+            {
+                tree.Insert(point);
+            }
+
         }
 
         Option<Point> lowerLimit = lowerLimitShareX.HasValue && lowerLimitShareY.HasValue ? new Option<Point>(true, new(minPoint.X + lowerLimitShareX.Value * (maxPoint.X - minPoint.X), minPoint.Y + lowerLimitShareY.Value * (maxPoint.Y - minPoint.Y))) : default;
@@ -79,6 +90,7 @@ public class GetTest
             ];
             int[] seeds = [0, 1];
             bool[] parallels = [false, true];
+            bool[] bulkInserts = [false, true];
             double?[] limitShares = [null, -1.0, 0.0, 0.5, 1.0, 2.0];
 
             foreach (int blockSize in blockSizes)
@@ -98,21 +110,23 @@ public class GetTest
 
                                 foreach (bool parallel in parallels)
                                 {
-                                    foreach (double? lowerLimitShareX in limitShares)
+                                    foreach (bool bulkInsert in bulkInserts)
                                     {
-                                        foreach (double? lowerLimitShareY in limitShares)
+                                        foreach (double? lowerLimitShareX in limitShares)
                                         {
-                                            foreach (double? upperLimitShareX in limitShares)
+                                            foreach (double? lowerLimitShareY in limitShares)
                                             {
-                                                foreach (double? upperLimitShareY in limitShares)
+                                                foreach (double? upperLimitShareX in limitShares)
                                                 {
-                                                    yield return new TestCaseData(blockSize, count, xPattern, yPattern, seeds[i], parallel, lowerLimitShareX, lowerLimitShareY, upperLimitShareX, upperLimitShareY);
+                                                    foreach (double? upperLimitShareY in limitShares)
+                                                    {
+                                                        yield return new TestCaseData(blockSize, count, xPattern, yPattern, seeds[i], parallel, bulkInsert, lowerLimitShareX, lowerLimitShareY, upperLimitShareX, upperLimitShareY);
+                                                    }
                                                 }
                                             }
                                         }
                                     }
                                 }
-
                             }
                         }
                     }

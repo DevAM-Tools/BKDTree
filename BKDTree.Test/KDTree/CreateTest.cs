@@ -21,7 +21,9 @@ public class CreateTest
             return point;
         }).ToArray();
 
-        Dictionary<Point, Point[]> groupedPoints = points.GroupBy(x => x).ToDictionary(x => x.Key, x => x.ToArray());
+        Dictionary<Point, Point[]> groupedPoints = points
+            .GroupBy(x => x)
+            .ToDictionary(x => x.Key, x => x.ToArray());
 
         KDTree<Point> tree = new(2, points, parallel);
 

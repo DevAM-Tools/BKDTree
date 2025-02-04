@@ -9,19 +9,22 @@ namespace BKDTree.Test;
 public class CreateTest
 {
     [TestCaseSource(typeof(CreateTest), nameof(TestCases))]
-    public void Create(int blockSize, int count, Pattern xPattern, Pattern yPattern, int seed, bool parallel)
+    public void Create(int blockSize, int count, Pattern xPattern, Pattern yPattern, int seed, bool parallel, bool bulkInsert)
     {
         Random random = new(seed);
 
-        Point[] points = Enumerable.Range(0, count).Select(value =>
+        List<Point> points = Enumerable.Range(0, count).Select(value =>
         {
             double x = Point.GenerateValue(xPattern, value, count, random);
             double y = Point.GenerateValue(yPattern, value, count, random);
             Point point = new(x, y);
             return point;
-        }).ToArray();
+        }).ToList();
 
-        Dictionary<Point, Point[]> groupedPoints = points.GroupBy(x => x).ToDictionary(x => x.Key, x => x.ToArray());
+        IEnumerable<Point> testPoints = bulkInsert ? points.Concat(points) : points;
+        Dictionary<Point, Point[]> groupedPoints = testPoints
+            .GroupBy(x => x)
+            .ToDictionary(x => x.Key, x => x.ToArray());
 
         BKDTree<Point> tree = new(2, blockSize, parallel);
         for (int i = 0; i < count; i++)
@@ -32,7 +35,14 @@ public class CreateTest
             Assert.That(tree.Count, Is.EqualTo(i + 1));
         }
 
-        Assert.That(tree.Count, Is.EqualTo(points.Length));
+        Assert.That(tree.Count, Is.EqualTo(points.Count));
+
+        if (bulkInsert)
+        {
+            tree.Insert(points);
+
+            Assert.That(tree.Count, Is.EqualTo(2 * points.Count));
+        }
 
         foreach (Point point in points)
         {
@@ -53,8 +63,6 @@ public class CreateTest
             Point[] existingPoints = tree.Get(point).ToArray();
 
             CollectionAssert.AreEquivalent(expectedPoints, existingPoints);
-
-
         }
     }
 
@@ -78,6 +86,7 @@ public class CreateTest
             ];
             int[] seeds = [0, 1, 2];
             bool[] parallels = [false, true];
+            bool[] bulkInserts = [false, true];
 
             foreach (int blockSize in blockSizes)
             {
@@ -96,7 +105,10 @@ public class CreateTest
 
                                 foreach (bool parallel in parallels)
                                 {
-                                    yield return new TestCaseData(blockSize, count, xPattern, yPattern, seeds[i], parallel);
+                                    foreach (bool bulkInsert in bulkInserts)
+                                    {
+                                        yield return new TestCaseData(blockSize, count, xPattern, yPattern, seeds[i], parallel, bulkInsert);
+                                    }
                                 }
                             }
                         }

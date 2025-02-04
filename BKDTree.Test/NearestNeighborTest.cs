@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
 
 namespace BKDTree.Test;
@@ -7,26 +8,33 @@ namespace BKDTree.Test;
 public class NearestNeighborTest
 {
     [TestCaseSource(typeof(NearestNeighborTest), nameof(TestCases))]
-    public void GetHearestNeighbor(int count, int seed, bool parallel)
+    public void GetNearestNeighbor(int count, int seed, bool parallel, bool bulkInsert)
     {
         Random random = new(seed);
 
-        Point[] points = Enumerable.Range(0, count).Select(value =>
+        List<Point> points = Enumerable.Range(0, count).Select(value =>
         {
             double x = Point.GenerateValue(Pattern.Random, value, count, random);
             double y = Point.GenerateValue(Pattern.Random, value, count, random);
             Point point = new(x, y);
             return point;
-        }).ToArray();
+        }).ToList();
 
         MetricBKDTree<Point> tree = new(2, parallel: parallel);
 
-        for (int i = 0; i < count; i++)
+        if (bulkInsert)
         {
-            Point point = points[i];
-            tree.Insert(point);
+            tree.Insert(points);
+        }
+        else
+        {
+            for (int i = 0; i < count; i++)
+            {
+                Point point = points[i];
+                tree.Insert(point);
 
-            Assert.That(tree.Count, Is.EqualTo(i + 1));
+                Assert.That(tree.Count, Is.EqualTo(i + 1));
+            }
         }
 
         foreach (Point point in points)
@@ -41,9 +49,9 @@ public class NearestNeighborTest
         Point targetPoint = new(x, y);
 
         Option<Point> expectedNearestNeighbor = default;
-        double? minSquaredDistance = default;
+        double? minSquaredDistance = null;
 
-        for (int i = 0; i < points.Length; i++)
+        for (int i = 0; i < points.Count; i++)
         {
             Point point = points[i];
             double squaredDistance = MetricKDTree<Point>.GetSquaredDistance(ref point, ref targetPoint, 2);
@@ -66,6 +74,7 @@ public class NearestNeighborTest
             int[] counts = [10, 500];
             int[] seeds = Enumerable.Range(0, 10000).ToArray();
             bool[] parallels = [false, true];
+            bool[] bulkInserts = [false, true];
 
             foreach (int count in counts)
             {
@@ -73,7 +82,10 @@ public class NearestNeighborTest
                 {
                     foreach (bool parallel in parallels)
                     {
-                        yield return new TestCaseData(count, seed, parallel);
+                        foreach (bool bulkInsert in bulkInserts)
+                        {
+                            yield return new TestCaseData(count, seed, parallel, bulkInsert);
+                        }
                     }
                 }
             }

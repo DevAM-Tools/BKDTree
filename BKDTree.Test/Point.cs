@@ -4,7 +4,7 @@ using System.Runtime.CompilerServices;
 namespace BKDTree.Test;
 
 
-public record struct Point(double X, double Y) : IMetricTreeItem<Point>
+public readonly record struct Point(double X, double Y) : IMetricTreeItem<Point>
 {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public int CompareDimensionTo(Point other, int dimension)

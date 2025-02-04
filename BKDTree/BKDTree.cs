@@ -53,7 +53,7 @@ public class BKDTree<T> where T : ITreeItem<T>
         }
     }
 
-    protected virtual KDTree<T> CreateNewTree(T[][] values)
+    internal virtual KDTree<T> CreateNewTree(IList<Segment<T>> values)
     {
         KDTree<T> result = new(DimensionCount, values, Comparers, MaxThreadCount);
         return result;
@@ -82,7 +82,7 @@ public class BKDTree<T> where T : ITreeItem<T>
             int emptyIndex = 0;
             for (emptyIndex = 0; emptyIndex < Trees.Length; emptyIndex++)
             {
-                ref KDTree<T> tree = ref Trees[emptyIndex];
+                KDTree<T> tree = Trees[emptyIndex];
                 if (tree is null)
                 {
                     break;
@@ -94,11 +94,11 @@ public class BKDTree<T> where T : ITreeItem<T>
                 throw new InvalidOperationException("Insertion failed. Tree is full.");
             }
 
-            T[][] values = new T[emptyIndex + 1][];
-            values[0] = BaseBlock;
+            Segment<T>[] values = new Segment<T>[emptyIndex + 1];
+            values[0] = new(BaseBlock);
             for (int i = 0; i < emptyIndex; i++)
             {
-                values[i + 1] = Trees[i].Values;
+                values[i + 1] = new(Trees[i].Values);
             }
 
             KDTree<T> newTree = CreateNewTree(values);
@@ -122,6 +122,167 @@ public class BKDTree<T> where T : ITreeItem<T>
         BaseBlock[BaseBlockCount] = value;
         BaseBlockCount++;
         Count++;
+    }
+
+    /// <summary>
+    /// Inserts a list of values without any checks for duplicates.
+    /// </summary>
+    /// <param name="values">The values that shall be inserted must not be null.</param>
+    /// <exception cref="ArgumentNullException"></exception>
+    /// <exception cref="InvalidOperationException"></exception>
+    public void Insert(List<T> values)
+    {
+        if (values is null)
+        {
+            throw new ArgumentNullException(nameof(values));
+        }
+
+        if (values.Count == 0)
+        {
+            return;
+        }
+
+        if (values.Count <= 2 * BlockSize)
+        {
+            for (int i = 0; i < values.Count; i++)
+            {
+                Insert(values[i]);
+            }
+
+            return;
+        }
+
+        if (Interlocked.Read(ref _EnumerationCount) > 0L)
+        {
+            throw new InvalidOperationException("Modifications during enumerations are not allowed.");
+        }
+
+        Stack<Segment<T>> segments = new(Trees.Length + 2);
+        segments.Push(new(values));
+        if (BaseBlockCount > 0)
+        {
+            segments.Push(new(BaseBlock, 0, BaseBlockCount));
+        }
+
+        long newCount = BaseBlockCount + values.Count;
+        int cumulativeBlockSize = BlockSize; // BaseBlock
+        for (int i = 0; i < 32; i++)
+        {
+            if (newCount < cumulativeBlockSize)
+            {
+                break;
+            }
+
+            int currentBlockSize = BlockSize << i;
+            if (i < Trees.Length)
+            {
+                KDTree<T> tree = Trees[i];
+
+                if (tree is not null)
+                {
+                    newCount += currentBlockSize;
+                    Segment<T> segment = new(tree.Values);
+                    segments.Push(segment);
+                }
+            }
+
+            cumulativeBlockSize += currentBlockSize;
+        }
+
+        // A bitmask that represents the used blocks in the new tree
+        // If the bit is not set the block will stay null
+        long usedBlocksBitmask = newCount / BlockSize;
+        int newTreeCount = 1 + (int)Math.Log(usedBlocksBitmask, 2);
+        KDTree<T>[] newTrees = new KDTree<T>[newTreeCount];
+
+        if (newTreeCount > Trees.Length)
+        {
+            Array.Resize(ref Trees, newTreeCount);
+        }
+
+        // Will be reused for each tree
+        List<Segment<T>> currentSegments = new(segments.Count);
+
+        int currentBit = 1;
+        int segmentOffset = 0;
+        for (int i = 0; i < newTrees.Length; i++)
+        {
+            int currentCount = 0;
+            currentSegments.Clear();
+
+            int currentBlockSize = BlockSize << i;
+
+            bool isBlockUsed = (currentBit & usedBlocksBitmask) != 0;
+            if (isBlockUsed)
+            {
+                while (segments.Count > 0)
+                {
+                    Segment<T> segment = segments.Peek();
+                    int remainingSegmentLength = segment.Length - segmentOffset;
+
+                    // Does the segment fit into as a whole? 
+                    if (currentCount + remainingSegmentLength < currentBlockSize)
+                    {
+                        Segment<T> currentSegment = new(segment.Values, segmentOffset, remainingSegmentLength);
+                        currentSegments.Add(currentSegment);
+
+                        segmentOffset += remainingSegmentLength;
+                        currentCount += remainingSegmentLength;
+                    }
+                    else // Segment needs to be sliced
+                    {
+                        int missingCount = currentBlockSize - currentCount;
+                        Segment<T> currentSegment = new(segment.Values, segmentOffset, missingCount);
+                        currentSegments.Add(currentSegment);
+
+                        segmentOffset += missingCount;
+                        currentCount += missingCount;
+                    }
+
+                    if (segmentOffset >= segment.Length)
+                    {
+                        segmentOffset = 0;
+                        segments.Pop();
+                    }
+
+                    if (currentCount == currentBlockSize)
+                    {
+                        break;
+                    }
+                }
+
+                KDTree<T> tree = CreateNewTree(currentSegments);
+                newTrees[i] = tree;
+            }
+
+            currentBit <<= 1;
+        }
+
+        T[] newBaseBlock = new T[BlockSize];
+        int currentBaseBlockIndex = 0;
+        while (segments.Count > 0)
+        {
+            Segment<T> segment = segments.Pop();
+            int remainingSegmentLength = segment.Length - segmentOffset;
+
+            if (segment.Values is T[] array)
+            {
+                Array.Copy(array, segmentOffset, newBaseBlock, currentBaseBlockIndex, remainingSegmentLength);
+            }
+            else if (segment.Values is List<T> list)
+            {
+                list.CopyTo(segmentOffset, newBaseBlock, currentBaseBlockIndex, remainingSegmentLength);
+            }
+            currentBaseBlockIndex += remainingSegmentLength;
+        }
+
+        BaseBlock = newBaseBlock;
+        BaseBlockCount = currentBaseBlockIndex;
+        for (int i = 0; i < newTrees.Length; i++)
+        {
+            Trees[i] = newTrees[i];
+        }
+        Count += values.Count;
     }
 
     /// <summary>
@@ -249,7 +410,7 @@ public class BKDTree<T> where T : ITreeItem<T>
     }
 
     /// <summary>
-    /// Gets all matching values. Since <see cref="BKDTree{T}"/> does allow duplicates this may be more than one. Consider using <see cref="DoForEach(T, Func{T, bool}"/> if performance is critical.
+    /// Gets all matching values. Since <see cref="BKDTree{T}"/> does allow duplicates this may be more than one. Consider using <see cref="DoForEach(T, Func{T, bool})"/> if performance is critical.
     /// </summary>
     /// <param name="value"></param>
     /// <returns></returns>
@@ -295,7 +456,7 @@ public class BKDTree<T> where T : ITreeItem<T>
     }
 
     /// <summary>
-    /// Applies an <paramref name="actionAndCancelFunction"/> to every mathing values. Since <see cref="BKDTree{T}"/> does allow duplicates this may be more than one. Prefer this over <see cref="Get(T)"/> in performance critical paths.
+    /// Applies an <paramref name="actionAndCancelFunction"/> to every matching values. Since <see cref="BKDTree{T}"/> does allow duplicates this may be more than one. Prefer this over <see cref="Get(T)"/> in performance critical paths.
     /// </summary>
     /// <param name="value"></param>
     /// <param name="actionAndCancelFunction">Will be called for every matching value. If it returns true the iteration will be canceled.</param>
@@ -485,6 +646,7 @@ public class BKDTree<T> where T : ITreeItem<T>
     /// <param name="lowerLimit">Optional inclusive lower limit</param>
     /// <param name="upperLimit">Optional upper limit</param>
     /// <param name="upperLimitInclusive">The upper limit is inclusive if true otherwise the upper limit is exclusive</param>
+    /// <param name="value">The value that will be set if an element is found</param>
     /// <returns>true if an element is found otherwise false</returns>
     public bool TryGetFirst(Option<T> lowerLimit, Option<T> upperLimit, bool upperLimitInclusive, ref T value)
     {
@@ -550,74 +712,5 @@ public class BKDTree<T> where T : ITreeItem<T>
         {
             Interlocked.Add(ref _EnumerationCount, -1);
         }
-    }
-}
-
-[DebuggerDisplay("Count: {Count}")]
-public class MetricBKDTree<T> : BKDTree<T> where T : IMetricTreeItem<T>
-{
-    public MetricBKDTree(int dimensionCount, int blockSize = DefaultBlockSize, bool parallel = false)
-        : this(dimensionCount, blockSize, parallel ? Environment.ProcessorCount : 1)
-    {
-    }
-
-    public MetricBKDTree(int dimensionCount, int blockSize, int maxThreadCount)
-        : base(dimensionCount, blockSize, maxThreadCount)
-    {
-    }
-
-    protected override KDTree<T> CreateNewTree(T[][] values)
-    {
-        KDTree<T> result = new MetricKDTree<T>(DimensionCount, values, Comparers, MaxThreadCount);
-        return result;
-    }
-
-    /// <summary>
-    /// Gets the value with the lowest euclidean distance between it and the given <paramref name="value"/>.
-    /// </summary>
-    /// <param name="value"></param>
-    /// <param name="neighbor"></param>
-    /// <param name="squaredDistance"></param>
-    /// <returns>true if a neighbor was found otherwise false</returns>
-    /// <exception cref="ArgumentNullException"></exception>
-    public bool GetNearestNeighbor(T value, out T neighbor, out double squaredDistance)
-    {
-        if (value is null)
-        {
-            throw new ArgumentNullException(nameof(value));
-        }
-
-        Option<T> currentNeighbor = default;
-        double? minSqaredDistance = default;
-
-        for (int i = 0; i < BaseBlockCount; i++)
-        {
-            ref T currentValue = ref BaseBlock[i];
-
-            double distance = MetricKDTree<T>.GetSquaredDistance(ref value, ref currentValue, DimensionCount);
-
-            if (!minSqaredDistance.HasValue || distance < minSqaredDistance.Value)
-            {
-                currentNeighbor = currentValue;
-                minSqaredDistance = distance;
-            }
-        }
-
-        for (int i = 0; i < Trees.Length; i++)
-        {
-            MetricKDTree<T> tree = Trees[i] as MetricKDTree<T>;
-            if (tree is null)
-            {
-                continue;
-            }
-
-            tree.GetNearestNeighbor(ref value, ref currentNeighbor, ref minSqaredDistance, 0, tree.Count - 1, 0);
-        }
-
-        neighbor = currentNeighbor.Value;
-        squaredDistance = minSqaredDistance.HasValue ? minSqaredDistance.Value : default;
-        bool result = currentNeighbor.HasValue;
-
-        return result;
     }
 }

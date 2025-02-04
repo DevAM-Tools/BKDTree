@@ -7,7 +7,7 @@ namespace BKDTree.Test.KDTree;
 public class NearestNeighborTest
 {
     [TestCaseSource(typeof(NearestNeighborTest), nameof(TestCases))]
-    public void GetHearestNeighbor(int count, int seed, bool parallel)
+    public void GetNearestNeighbor(int count, int seed, bool parallel)
     {
         Random random = new(seed);
 
@@ -33,7 +33,7 @@ public class NearestNeighborTest
         Point targetPoint = new(x, y);
 
         Option<Point> expectedNearestNeighbor = default;
-        double? expectedMinSquaredDistance = default;
+        double? expectedMinSquaredDistance = null;
 
         for (int i = 0; i < points.Length; i++)
         {

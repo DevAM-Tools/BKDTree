@@ -9,13 +9,13 @@ namespace BKDTree.Benchmark;
 [EventPipeProfiler(EventPipeProfile.CpuSampling)]
 public class Benchmark
 {
-    [Params(1_000_000, 10_000_000)]
+    [Params(1_000_000)]
     public int N;
 
-    [Params(128, 256, 512, 1024)]
+    [Params(1024)]
     public int BlockSize;
 
-    [Params(Pattern.Random, Pattern.Increasing)]
+    [Params(Pattern.Random)]
     public Pattern Pattern;
 
     public Point[] Points { get; set; }
