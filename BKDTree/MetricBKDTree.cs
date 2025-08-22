@@ -5,21 +5,25 @@ using System.Diagnostics;
 namespace BKDTree;
 
 [DebuggerDisplay("Count: {Count}")]
-public class MetricBKDTree<T> : BKDTree<T> where T : IMetricTreeItem<T>
+public class MetricBKDTree<T> : BKDTree<T>
 {
-    public MetricBKDTree(int dimensionCount, int blockSize = DefaultBlockSize, bool parallel = false)
-        : this(dimensionCount, blockSize, parallel ? Environment.ProcessorCount : 1)
+    internal readonly Func<T, int, double> GetDimension;
+
+    public MetricBKDTree(int dimensionCount, Func<T, T, int, int> compareDimensionTo, Func<T, int, double> getDimension, int blockSize = DefaultBlockSize, bool parallel = false)
+        : this(dimensionCount, compareDimensionTo, getDimension, blockSize, parallel ? Environment.ProcessorCount : 1)
     {
     }
 
-    public MetricBKDTree(int dimensionCount, int blockSize, int maxThreadCount)
-        : base(dimensionCount, blockSize, maxThreadCount)
+    public MetricBKDTree(int dimensionCount, Func<T, T, int, int> compareDimensionTo, Func<T, int, double> getDimension, int blockSize, int maxThreadCount)
+        : base(dimensionCount, compareDimensionTo, blockSize, maxThreadCount)
     {
+        GetDimension = getDimension
+            ?? throw new ArgumentNullException(nameof(getDimension));
     }
 
     internal override KDTree<T> CreateNewTree(IList<Segment<T>> values)
     {
-        KDTree<T> result = new MetricKDTree<T>(DimensionCount, values, Comparers, MaxThreadCount);
+        KDTree<T> result = new MetricKDTree<T>(DimensionCount, values, CompareDimensionTo, GetDimension, Comparers, MaxThreadCount);
         return result;
     }
 
@@ -45,7 +49,7 @@ public class MetricBKDTree<T> : BKDTree<T> where T : IMetricTreeItem<T>
         {
             ref T currentValue = ref BaseBlock[i];
 
-            double distance = MetricKDTree<T>.GetSquaredDistance(ref value, ref currentValue, DimensionCount);
+            double distance = MetricKDTree<T>.GetSquaredDistance(ref value, ref currentValue, DimensionCount, GetDimension);
 
             if (!minSquaredDistance.HasValue || distance < minSquaredDistance.Value)
             {

@@ -10,9 +10,9 @@
 		<Authors>DevAM</Authors>
 		<Company>DevAM</Company>
 		<Product>BTree</Product>
-		<Version>1.4.0</Version>
-		<AssemblyVersion>1.4.0</AssemblyVersion>
-		<FileVersion>1.4.0</FileVersion>
+		<Version>2.0.0</Version>
+		<AssemblyVersion>2.0.0</AssemblyVersion>
+		<FileVersion>2.0.0</FileVersion>
 		<Description>BKDTree offers a simple and high performant implementation of a growing only BKDTree and a static KDTree for C# and .NET. </Description>
 		<Copyright>Copyright (c) 2024 DevAM. All Rights Reserved.</Copyright>
 		<PackageIcon>icon.png</PackageIcon>
@@ -24,8 +24,8 @@
 		<AssemblyName>BKDTree</AssemblyName>
 		<SignAssembly>False</SignAssembly>
 		<PackageId>BKDTree</PackageId>
-		<PackageProjectUrl>https://github.com/CodeDevAM/BKDTree</PackageProjectUrl>
-		<RepositoryUrl>https://github.com/CodeDevAM/BKDTree</RepositoryUrl>
+		<PackageProjectUrl>https://github.com/DevAM-Tools/BKDTree</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/DevAM-Tools/BKDTree</RepositoryUrl>
 	</PropertyGroup>
 
 	<ItemGroup>

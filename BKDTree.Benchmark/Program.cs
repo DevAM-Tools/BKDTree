@@ -1,12 +1,12 @@
-﻿using BKDTree.Test;
-using System.Collections.Generic;
-using BenchmarkDotNet.Jobs;
+﻿using BenchmarkDotNet.Jobs;
 
 namespace BKDTree.Benchmark;
 
 internal class Program
 {
+#pragma warning disable TUnit0034 // Do not declare a main method
     private static void Main(string[] args)
+#pragma warning restore TUnit0034 // Do not declare a main method
     {
 #if true
         BenchmarkDotNet.Configs.ManualConfig config = BenchmarkDotNet.Configs.ManualConfig.CreateMinimumViable()

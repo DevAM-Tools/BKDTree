@@ -4,27 +4,27 @@ using System.Runtime.CompilerServices;
 namespace BKDTree.Test;
 
 
-public readonly record struct Point(double X, double Y) : IMetricTreeItem<Point>
+public readonly record struct Point(double X, double Y)
 {
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public int CompareDimensionTo(Point other, int dimension)
+    public static int CompareDimensionTo(Point left, Point right, int dimension)
     {
         int result = dimension switch
         {
-            0 => X < other.X ? -1 : X > other.X ? 1 : 0,
-            1 => Y < other.Y ? -1 : Y > other.Y ? 1 : 0,
+            0 => left.X < right.X ? -1 : left.X > right.X ? 1 : 0,
+            1 => left.Y < right.Y ? -1 : left.Y > right.Y ? 1 : 0,
             _ => throw new ArgumentOutOfRangeException(nameof(dimension))
         };
         return result;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public double GetDimension(int dimension)
+    public static double GetDimension(Point point, int dimension)
     {
         double result = dimension switch
         {
-            0 => X,
-            1 => Y,
+            0 => point.X,
+            1 => point.Y,
             _ => throw new ArgumentOutOfRangeException(nameof(dimension))
         };
         return result;

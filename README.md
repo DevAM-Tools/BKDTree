@@ -4,28 +4,14 @@ BKDTree offers a simple and high performant implementation of a growing only `BK
 
 A BKDTree and an KDTree allow storing any queying of multidimensional data. Non of these support a method for removing items.
 
-For nearest neighbor queries there are dediated variants like `MetricBKDTree<T>` and `MetricKDTree<T>`. As nearest neighbor queries require to calculate euclidean distance between values `T` must implement `IMetricTreeItem<in T>`.
+For nearest neighbor queries there are dedicated variants like `MetricBKDTree<T>` and `MetricKDTree<T>`. As nearest neighbor queries require to calculate euclidean distance between values `T` must implement `IMetricTreeItem<in T>`.
 
-![icon](https://raw.githubusercontent.com/CodeDevAM/BKDTree/main/icon.png)
+![icon](https://raw.githubusercontent.com/DevAM-Tools/BKDTree/main/icon.png)
 
 ## Usage
-Items of type `T` that shall be stored in a `BKDTree<T>` or a `KDTree<T>` must implement the interface `ITreeItem<T>` with its method `CompareDimensionTo()`.
+`BKDTree<T>` or a `KDTree<T>` require a method `int CompareDimensionTo(T left, T right, int dimension)` for yout specific type `T`.
 
-```Csharp
-public interface ITreeItem<in T>
-{
-    int CompareDimensionTo(T other, int dimension);
-}
-```
-
-For nearest neighbor queries there are dediated variants `MetricBKDTree<T>` and `MetricKDTree<T>` while `T` must implement `IMetricTreeItem<in T>` to allow calculation of euclidean distance between values.
-
-```Csharp
-public interface IMetricTreeItem<in T> : ITreeItem<T>
-{
-    double GetDimension(int dimension);
-}
-```
+`MetricBKDTree<T>` and `MetricKDTree<T>` support nearest neighbor queries. Therefore a method `double GetDimension(T item, int dimension)` for the calculation of euclidean distances between values is required.
 
 ## Contribution
 

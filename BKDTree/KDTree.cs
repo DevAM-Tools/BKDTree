@@ -9,11 +9,12 @@ using System.Threading.Tasks;
 namespace BKDTree;
 
 [DebuggerDisplay("Count: {Count}")]
-public class KDTree<T> where T : ITreeItem<T>
+public class KDTree<T>
 {
     internal readonly int DimensionCount;
     internal readonly T[] Values;
     internal readonly bool[] Dirties;
+    internal readonly Func<T, T, int, int> CompareDimensionTo;
 
     public int Count => Values.Length;
 
@@ -22,26 +23,39 @@ public class KDTree<T> where T : ITreeItem<T>
         public volatile int Value = value;
     }
 
-    public KDTree(int dimensionCount, IEnumerable<T> values, bool parallel = false)
-        : this(dimensionCount, values, parallel ? Environment.ProcessorCount : 1)
+    public KDTree(int dimensionCount, IEnumerable<T> values, Func<T, T, int, int> compareDimensionTo, bool parallel = false)
+        : this(dimensionCount, values, compareDimensionTo, parallel ? Environment.ProcessorCount : 1)
     {
     }
 
-    public KDTree(int dimensionCount, IEnumerable<T> values, int maxThreadCount)
+    public KDTree(int dimensionCount, IEnumerable<T> values, Func<T, T, int, int> compareDimensionTo, int maxThreadCount)
     {
         if (dimensionCount <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(dimensionCount));
         }
 
+        if (values is null)
+        {
+            throw new ArgumentNullException(nameof(values));
+        }
+
+        CompareDimensionTo = compareDimensionTo
+            ?? throw new ArgumentNullException(nameof(compareDimensionTo));
         DimensionCount = dimensionCount;
-        Values = values?.ToArray() ?? throw new ArgumentNullException(nameof(values));
+        Values = values.ToArray();
+
+        if (Values.Length == 0)
+        {
+            throw new ArgumentException("Values collection cannot be empty.", nameof(values));
+        }
+
         Dirties = new bool[Values.Length];
 
         DimensionalComparer<T>[] comparers = new DimensionalComparer<T>[DimensionCount];
         for (int dimension = 0; dimension < DimensionCount; dimension++)
         {
-            comparers[dimension] = new(dimension);
+            comparers[dimension] = new(dimension, CompareDimensionTo);
         }
 
         Box threadCount = new(1);
@@ -49,24 +63,31 @@ public class KDTree<T> where T : ITreeItem<T>
         Build(0, Values.Length - 1, 0, comparers, threadCount, maxThreadCount);
     }
 
-    internal KDTree(int dimensionCount, IList<Segment<T>> values, DimensionalComparer<T>[] comparers, bool parallel = false)
-        : this(dimensionCount, values, comparers, parallel ? Environment.ProcessorCount : 1)
+    internal KDTree(int dimensionCount, IList<Segment<T>> values, Func<T, T, int, int> compareDimensionTo, DimensionalComparer<T>[] comparers, bool parallel = false)
+        : this(dimensionCount, values, compareDimensionTo, comparers, parallel ? Environment.ProcessorCount : 1)
     {
     }
 
-    internal KDTree(int dimensionCount, IList<Segment<T>> values, DimensionalComparer<T>[] comparers, int maxThreadCount)
+    internal KDTree(int dimensionCount, IList<Segment<T>> values, Func<T, T, int, int> compareDimensionTo, DimensionalComparer<T>[] comparers, int maxThreadCount)
     {
         if (dimensionCount <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(dimensionCount));
         }
 
-        DimensionCount = dimensionCount;
-
         if (values is null)
         {
             throw new ArgumentNullException(nameof(values));
         }
+
+        if (values.Count == 0)
+        {
+            throw new ArgumentException("Values collection cannot be empty.", nameof(values));
+        }
+
+        CompareDimensionTo = compareDimensionTo
+            ?? throw new ArgumentNullException(nameof(compareDimensionTo));
+        DimensionCount = dimensionCount;
 
         long count = 0L;
         for (int i = 0; i < values.Count; i++)
@@ -228,7 +249,7 @@ public class KDTree<T> where T : ITreeItem<T>
         {
             midIndex = (rightIndex + leftIndex) / 2;
             ref T currentValue = ref Values[midIndex];
-            compareResult = value.CompareDimensionTo(currentValue, dimension);
+            compareResult = CompareDimensionTo(value, currentValue, dimension);
 
             if (compareResult < 0)
             {
@@ -266,11 +287,11 @@ public class KDTree<T> where T : ITreeItem<T>
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static bool IsEqualTo(T left, T right, int dimensionCount)
+    internal static bool IsEqualTo(T left, T right, int dimensionCount, Func<T, T, int, int> compareDimensionTo)
     {
         for (int dimension = 0; dimension < dimensionCount; dimension++)
         {
-            if (left.CompareDimensionTo(right, dimension) != 0)
+            if (compareDimensionTo(left, right, dimension) != 0)
             {
                 return false;
             }
@@ -279,25 +300,11 @@ public class KDTree<T> where T : ITreeItem<T>
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static bool IsKeyLessThanOrEqualToLimit(T value, T limit, int dimensionCount)
+    internal static bool IsKeyLessThanOrEqualToLimit(T value, T limit, int dimensionCount, Func<T, T, int, int> compareDimensionTo)
     {
         for (int dimension = 0; dimension < dimensionCount; dimension++)
         {
-            if (value.CompareDimensionTo(limit, dimension) > 0)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static bool IsKeyLessThanLimit(T value, T limit, int dimensionCount)
-    {
-        for (int dimension = 0; dimension < dimensionCount; dimension++)
-        {
-            if (value.CompareDimensionTo(limit, dimension) >= 0)
+            if (compareDimensionTo(value, limit, dimension) > 0)
             {
                 return false;
             }
@@ -307,11 +314,25 @@ public class KDTree<T> where T : ITreeItem<T>
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static bool IsKeyGreaterThanOrEqualToLimit(T value, T limit, int dimensionCount)
+    internal static bool IsKeyLessThanLimit(T value, T limit, int dimensionCount, Func<T, T, int, int> compareDimensionTo)
     {
         for (int dimension = 0; dimension < dimensionCount; dimension++)
         {
-            if (value.CompareDimensionTo(limit, dimension) < 0)
+            if (compareDimensionTo(value, limit, dimension) >= 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static bool IsKeyGreaterThanOrEqualToLimit(T value, T limit, int dimensionCount, Func<T, T, int, int> compareDimensionTo)
+    {
+        for (int dimension = 0; dimension < dimensionCount; dimension++)
+        {
+            if (compareDimensionTo(value, limit, dimension) < 0)
             {
                 return false;
             }
@@ -397,13 +418,13 @@ public class KDTree<T> where T : ITreeItem<T>
         T midValue = Values[midIndex];
         bool dirty = Dirties[midIndex];
 
-        if (IsEqualTo(value, midValue, DimensionCount))
+        if (IsEqualTo(value, midValue, DimensionCount, CompareDimensionTo))
         {
             yield return midValue;
         }
 
         int nextDimension = (dimension + 1) % DimensionCount;
-        int comparisonResult = value.CompareDimensionTo(midValue, dimension);
+        int comparisonResult = CompareDimensionTo(value, midValue, dimension);
 
         if (comparisonResult >= 0)
         {
@@ -462,7 +483,7 @@ public class KDTree<T> where T : ITreeItem<T>
         ref T midValue = ref Values[midIndex];
         bool dirty = Dirties[midIndex];
 
-        if (IsEqualTo(value, midValue, DimensionCount))
+        if (IsEqualTo(value, midValue, DimensionCount, CompareDimensionTo))
         {
             bool cancel = actionAndCancelFunction.Invoke(midValue);
             if (cancel)
@@ -472,7 +493,7 @@ public class KDTree<T> where T : ITreeItem<T>
         }
 
         int nextDimension = (dimension + 1) % DimensionCount;
-        int comparisonResult = value.CompareDimensionTo(midValue, dimension);
+        int comparisonResult = CompareDimensionTo(value, midValue, dimension);
 
         if (comparisonResult >= 0)
         {
@@ -527,7 +548,7 @@ public class KDTree<T> where T : ITreeItem<T>
         {
             for (int dimension = 0; dimension < DimensionCount; dimension++)
             {
-                int comparisonResult = lowerLimit.Value.CompareDimensionTo(upperLimit.Value, dimension);
+                int comparisonResult = CompareDimensionTo(lowerLimit.Value, upperLimit.Value, dimension);
 
                 if (comparisonResult > 0)
                 {
@@ -546,11 +567,11 @@ public class KDTree<T> where T : ITreeItem<T>
         ref T midValue = ref Values[midIndex];
         bool dirty = Dirties[midIndex];
 
-        if (!lowerLimit.HasValue || IsKeyGreaterThanOrEqualToLimit(midValue, lowerLimit.Value, DimensionCount))
+        if (!lowerLimit.HasValue || IsKeyGreaterThanOrEqualToLimit(midValue, lowerLimit.Value, DimensionCount, CompareDimensionTo))
         {
             if (upperLimitInclusive)
             {
-                if (!upperLimit.HasValue || IsKeyLessThanOrEqualToLimit(midValue, upperLimit.Value, DimensionCount))
+                if (!upperLimit.HasValue || IsKeyLessThanOrEqualToLimit(midValue, upperLimit.Value, DimensionCount, CompareDimensionTo))
                 {
                     bool cancel = actionAndCancelFunction.Invoke(midValue);
                     if (cancel)
@@ -561,7 +582,7 @@ public class KDTree<T> where T : ITreeItem<T>
             }
             else
             {
-                if (!upperLimit.HasValue || IsKeyLessThanLimit(midValue, upperLimit.Value, DimensionCount))
+                if (!upperLimit.HasValue || IsKeyLessThanLimit(midValue, upperLimit.Value, DimensionCount, CompareDimensionTo))
                 {
                     bool cancel = actionAndCancelFunction.Invoke(midValue);
                     if (cancel)
@@ -574,7 +595,7 @@ public class KDTree<T> where T : ITreeItem<T>
 
         int nextDimension = (dimension + 1) % DimensionCount;
 
-        int? upperLimitComparisonResult = upperLimit.HasValue ? upperLimit.Value.CompareDimensionTo(midValue, dimension) : null;
+        int? upperLimitComparisonResult = upperLimit.HasValue ? CompareDimensionTo(upperLimit.Value, midValue, dimension) : null;
 
         if (!upperLimitComparisonResult.HasValue || upperLimitComparisonResult.Value >= 0)
         {
@@ -591,7 +612,7 @@ public class KDTree<T> where T : ITreeItem<T>
             }
         }
 
-        int? lowerLimitComparisonResult = lowerLimit.HasValue ? lowerLimit.Value.CompareDimensionTo(midValue, dimension) : null;
+        int? lowerLimitComparisonResult = lowerLimit.HasValue ? CompareDimensionTo(lowerLimit.Value, midValue, dimension) : null;
 
         if (!lowerLimitComparisonResult.HasValue || lowerLimitComparisonResult <= 0
             || (dirty && upperLimitComparisonResult == 0))
@@ -636,13 +657,13 @@ public class KDTree<T> where T : ITreeItem<T>
         ref T midValue = ref Values[midIndex];
         bool dirty = Dirties[midIndex];
 
-        if (IsEqualTo(value, midValue, DimensionCount))
+        if (IsEqualTo(value, midValue, DimensionCount, CompareDimensionTo))
         {
             return true;
         }
 
         int nextDimension = (dimension + 1) % DimensionCount;
-        int comparisonResult = value.CompareDimensionTo(midValue, dimension);
+        int comparisonResult = CompareDimensionTo(value, midValue, dimension);
 
         if (comparisonResult >= 0)
         {
@@ -694,7 +715,7 @@ public class KDTree<T> where T : ITreeItem<T>
         {
             for (int dimension = 0; dimension < DimensionCount; dimension++)
             {
-                int comparisonResult = lowerLimit.Value.CompareDimensionTo(upperLimit.Value, dimension);
+                int comparisonResult = CompareDimensionTo(lowerLimit.Value, upperLimit.Value, dimension);
 
                 if (comparisonResult > 0)
                 {
@@ -713,11 +734,11 @@ public class KDTree<T> where T : ITreeItem<T>
         ref T midValue = ref Values[midIndex];
         bool dirty = Dirties[midIndex];
 
-        if (!lowerLimit.HasValue || IsKeyGreaterThanOrEqualToLimit(midValue, lowerLimit.Value, DimensionCount))
+        if (!lowerLimit.HasValue || IsKeyGreaterThanOrEqualToLimit(midValue, lowerLimit.Value, DimensionCount, CompareDimensionTo))
         {
             if (upperLimitInclusive)
             {
-                if (!upperLimit.HasValue || IsKeyLessThanOrEqualToLimit(midValue, upperLimit.Value, DimensionCount))
+                if (!upperLimit.HasValue || IsKeyLessThanOrEqualToLimit(midValue, upperLimit.Value, DimensionCount, CompareDimensionTo))
                 {
                     value = midValue;
                     return true;
@@ -725,7 +746,7 @@ public class KDTree<T> where T : ITreeItem<T>
             }
             else
             {
-                if (!upperLimit.HasValue || IsKeyLessThanLimit(midValue, upperLimit.Value, DimensionCount))
+                if (!upperLimit.HasValue || IsKeyLessThanLimit(midValue, upperLimit.Value, DimensionCount, CompareDimensionTo))
                 {
                     value = midValue;
                     return true;
@@ -735,7 +756,7 @@ public class KDTree<T> where T : ITreeItem<T>
 
         int nextDimension = (dimension + 1) % DimensionCount;
 
-        int? upperLimitComparisonResult = upperLimit.HasValue ? upperLimit.Value.CompareDimensionTo(midValue, dimension) : null;
+        int? upperLimitComparisonResult = upperLimit.HasValue ? CompareDimensionTo(upperLimit.Value, midValue, dimension) : null;
 
         if (!upperLimitComparisonResult.HasValue || upperLimitComparisonResult.Value >= 0)
         {
@@ -752,7 +773,7 @@ public class KDTree<T> where T : ITreeItem<T>
             }
         }
 
-        int? lowerLimitComparisonResult = lowerLimit.HasValue ? lowerLimit.Value.CompareDimensionTo(midValue, dimension) : null;
+        int? lowerLimitComparisonResult = lowerLimit.HasValue ? CompareDimensionTo(lowerLimit.Value, midValue, dimension) : null;
 
         if (!lowerLimitComparisonResult.HasValue || lowerLimitComparisonResult <= 0
             || (dirty && upperLimitComparisonResult == 0))

@@ -6,12 +6,13 @@ using System.Threading;
 namespace BKDTree;
 
 [DebuggerDisplay("Count: {Count}")]
-public class BKDTree<T> where T : ITreeItem<T>
+public class BKDTree<T>
 {
     public const int DefaultBlockSize = 128;
     internal readonly int BlockSize;
     internal readonly int MaxThreadCount;
     internal readonly int DimensionCount;
+    internal readonly Func<T, T, int, int> CompareDimensionTo;
     internal T[] BaseBlock;
     internal int BaseBlockCount;
     internal KDTree<T>[] Trees = new KDTree<T>[1];
@@ -19,43 +20,43 @@ public class BKDTree<T> where T : ITreeItem<T>
 
     internal readonly DimensionalComparer<T>[] Comparers;
 
-    public bool IsMetric { get; } = typeof(IMetricTreeItem<T>).IsAssignableFrom(typeof(T));
-
     public long Count { get; private set; }
 
-    public BKDTree(int dimensionCount, int blockSize = DefaultBlockSize, bool parallel = false)
-        : this(dimensionCount, blockSize, parallel ? Environment.ProcessorCount : 1)
+    public BKDTree(int dimensionCount, Func<T, T, int, int> compareDimensionTo, int blockSize = DefaultBlockSize, bool parallel = false)
+        : this(dimensionCount, compareDimensionTo, blockSize, parallel ? Environment.ProcessorCount : 1)
     {
     }
 
-    public BKDTree(int dimensionCount, int blockSize, int maxThreadCount)
+    public BKDTree(int dimensionCount, Func<T, T, int, int> compareDimensionTo, int blockSize, int maxThreadCount)
     {
         if (dimensionCount <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(dimensionCount));
         }
 
+        CompareDimensionTo = compareDimensionTo
+            ?? throw new ArgumentNullException(nameof(compareDimensionTo));
         DimensionCount = (byte)dimensionCount;
         MaxThreadCount = Math.Max(1, Math.Min(Environment.ProcessorCount, maxThreadCount));
 
         if (blockSize < 2)
         {
-            throw new ArgumentNullException(nameof(blockSize));
+            throw new ArgumentOutOfRangeException(nameof(blockSize));
         }
 
         BlockSize = blockSize;
         BaseBlock = new T[BlockSize];
 
-        Comparers = new DimensionalComparer<T>[blockSize];
+        Comparers = new DimensionalComparer<T>[DimensionCount];
         for (int dimension = 0; dimension < DimensionCount; dimension++)
         {
-            Comparers[dimension] = new(dimension);
+            Comparers[dimension] = new(dimension, CompareDimensionTo);
         }
     }
 
     internal virtual KDTree<T> CreateNewTree(IList<Segment<T>> values)
     {
-        KDTree<T> result = new(DimensionCount, values, Comparers, MaxThreadCount);
+        KDTree<T> result = new(DimensionCount, values, CompareDimensionTo, Comparers, MaxThreadCount);
         return result;
     }
 
@@ -429,7 +430,7 @@ public class BKDTree<T> where T : ITreeItem<T>
             for (int i = 0; i < BaseBlockCount; i++)
             {
                 T currentValue = BaseBlock[i];
-                if (KDTree<T>.IsEqualTo(currentValue, value, DimensionCount))
+                if (KDTree<T>.IsEqualTo(currentValue, value, DimensionCount, CompareDimensionTo))
                 {
                     yield return currentValue;
                 }
@@ -480,7 +481,7 @@ public class BKDTree<T> where T : ITreeItem<T>
             for (int i = 0; i < BaseBlockCount; i++)
             {
                 T currentValue = BaseBlock[i];
-                if (KDTree<T>.IsEqualTo(currentValue, value, DimensionCount))
+                if (KDTree<T>.IsEqualTo(currentValue, value, DimensionCount, CompareDimensionTo))
                 {
                     bool cancel = actionAndCancelFunction.Invoke(currentValue);
                     if (cancel)
@@ -537,7 +538,7 @@ public class BKDTree<T> where T : ITreeItem<T>
             {
                 for (int dimension = 0; dimension < DimensionCount; dimension++)
                 {
-                    int comparisonResult = lowerLimit.Value.CompareDimensionTo(upperLimit.Value, dimension);
+                    int comparisonResult = CompareDimensionTo(lowerLimit.Value, upperLimit.Value, dimension);
 
                     if (comparisonResult > 0)
                     {
@@ -549,11 +550,11 @@ public class BKDTree<T> where T : ITreeItem<T>
             for (int i = 0; i < BaseBlockCount; i++)
             {
                 T currentValue = BaseBlock[i];
-                if (!lowerLimit.HasValue || KDTree<T>.IsKeyGreaterThanOrEqualToLimit(currentValue, lowerLimit.Value, DimensionCount))
+                if (!lowerLimit.HasValue || KDTree<T>.IsKeyGreaterThanOrEqualToLimit(currentValue, lowerLimit.Value, DimensionCount, CompareDimensionTo))
                 {
                     if (upperLimitInclusive)
                     {
-                        if (!upperLimit.HasValue || KDTree<T>.IsKeyLessThanOrEqualToLimit(currentValue, upperLimit.Value, DimensionCount))
+                        if (!upperLimit.HasValue || KDTree<T>.IsKeyLessThanOrEqualToLimit(currentValue, upperLimit.Value, DimensionCount, CompareDimensionTo))
                         {
                             bool cancel = actionAndCancelFunction.Invoke(currentValue);
                             if (cancel)
@@ -564,7 +565,7 @@ public class BKDTree<T> where T : ITreeItem<T>
                     }
                     else
                     {
-                        if (!upperLimit.HasValue || KDTree<T>.IsKeyLessThanLimit(currentValue, upperLimit.Value, DimensionCount))
+                        if (!upperLimit.HasValue || KDTree<T>.IsKeyLessThanLimit(currentValue, upperLimit.Value, DimensionCount, CompareDimensionTo))
                         {
                             bool cancel = actionAndCancelFunction.Invoke(currentValue);
                             if (cancel)
@@ -615,7 +616,7 @@ public class BKDTree<T> where T : ITreeItem<T>
         for (int i = 0; i < BaseBlockCount; i++)
         {
             ref T currentValue = ref BaseBlock[i];
-            if (KDTree<T>.IsEqualTo(currentValue, value, DimensionCount))
+            if (KDTree<T>.IsEqualTo(currentValue, value, DimensionCount, CompareDimensionTo))
             {
                 return true;
             }
@@ -658,7 +659,7 @@ public class BKDTree<T> where T : ITreeItem<T>
             {
                 for (int dimension = 0; dimension < DimensionCount; dimension++)
                 {
-                    int comparisonResult = lowerLimit.Value.CompareDimensionTo(upperLimit.Value, dimension);
+                    int comparisonResult = CompareDimensionTo(lowerLimit.Value, upperLimit.Value, dimension);
 
                     if (comparisonResult > 0)
                     {
@@ -670,11 +671,11 @@ public class BKDTree<T> where T : ITreeItem<T>
             for (int i = 0; i < BaseBlockCount; i++)
             {
                 T currentValue = BaseBlock[i];
-                if (!lowerLimit.HasValue || KDTree<T>.IsKeyGreaterThanOrEqualToLimit(currentValue, lowerLimit.Value, DimensionCount))
+                if (!lowerLimit.HasValue || KDTree<T>.IsKeyGreaterThanOrEqualToLimit(currentValue, lowerLimit.Value, DimensionCount, CompareDimensionTo))
                 {
                     if (upperLimitInclusive)
                     {
-                        if (!upperLimit.HasValue || KDTree<T>.IsKeyLessThanOrEqualToLimit(currentValue, upperLimit.Value, DimensionCount))
+                        if (!upperLimit.HasValue || KDTree<T>.IsKeyLessThanOrEqualToLimit(currentValue, upperLimit.Value, DimensionCount, CompareDimensionTo))
                         {
                             value = currentValue;
                             return true;
@@ -682,7 +683,7 @@ public class BKDTree<T> where T : ITreeItem<T>
                     }
                     else
                     {
-                        if (!upperLimit.HasValue || KDTree<T>.IsKeyLessThanLimit(currentValue, upperLimit.Value, DimensionCount))
+                        if (!upperLimit.HasValue || KDTree<T>.IsKeyLessThanLimit(currentValue, upperLimit.Value, DimensionCount, CompareDimensionTo))
                         {
                             value = currentValue;
                             return true;

@@ -5,7 +5,7 @@ using System.Diagnostics;
 namespace BKDTree;
 
 [DebuggerDisplay("Count: {Values is not null ? Length : 0}")]
-internal readonly struct Segment<T> where T : ITreeItem<T>
+internal readonly struct Segment<T>
 {
     internal readonly IList<T> Values;
     internal readonly int Offset;

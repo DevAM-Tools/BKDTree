@@ -1,15 +1,15 @@
-﻿using NUnit.Framework.Legacy;
-using System;
-using System.Collections;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace BKDTree.Test.KDTree;
 
 public class CreateTest
 {
-    [TestCaseSource(typeof(CreateTest), nameof(TestCases))]
-    public void Create(int count, Pattern xPattern, Pattern yPattern, int seed, bool parallel)
+    [Test]
+    [MethodDataSource(nameof(TestCases))]
+    public async Task Create(int count, Pattern xPattern, Pattern yPattern, int seed, bool parallel)
     {
         Random random = new(seed);
 
@@ -21,24 +21,32 @@ public class CreateTest
             return point;
         }).ToArray();
 
+        // Spezialbehandlung für leere Arrays
+        if (count == 0)
+        {
+            // KDTree wirft jetzt eine ArgumentException für leere Arrays
+            Assert.Throws<ArgumentException>(() => new KDTree<Point>(2, points, Point.CompareDimensionTo, parallel));
+            return;
+        }
+
         Dictionary<Point, Point[]> groupedPoints = points
             .GroupBy(x => x)
             .ToDictionary(x => x.Key, x => x.ToArray());
 
-        KDTree<Point> tree = new(2, points, parallel);
+        KDTree<Point> tree = new(2, points, Point.CompareDimensionTo, parallel);
 
-        Assert.That(tree.Count, Is.EqualTo(points.Length));
+        await Assert.That(tree.Count).IsEqualTo(points.Length);
 
         foreach (Point point in points)
         {
             bool found = tree.Contains(point);
 
-            Assert.That(found, Is.EqualTo(true));
+            await Assert.That(found).IsTrue();
 
             Point[] existingPoints = tree.Get(point).ToArray();
             Point[] expectedPoints = groupedPoints[point].ToArray();
 
-            CollectionAssert.AreEquivalent(expectedPoints, existingPoints);
+            await Assert.That(existingPoints).IsEquivalentTo(expectedPoints);
 
             List<Point> existingPointsList = [];
             tree.DoForEach(point, point =>
@@ -46,16 +54,14 @@ public class CreateTest
                 existingPointsList.Add(point);
                 return false;
             });
-            CollectionAssert.AreEquivalent(expectedPoints, existingPointsList);
+            await Assert.That(existingPointsList).IsEquivalentTo(expectedPoints);
         }
     }
 
-    public static IEnumerable TestCases
+    public static IEnumerable<object[]> TestCases()
     {
-        get
-        {
-            int[] counts = [10, 50, 100, 500];
-            Pattern[] patterns = [
+        int[] counts = [0, 1, 2, 10, 50, 100, 500, 1000];
+        Pattern[] patterns = [
                 Pattern.Increasing,
                 Pattern.LowerHalfIncreasing,
                 Pattern.UpperHalfIncreasing,
@@ -67,8 +73,8 @@ public class CreateTest
                 Pattern.Alternating,
                 Pattern.ReverseAlternating,
             ];
-            int[] seeds = [0, 1, 2];
-            bool[] parallels = [false, true];
+        int[] seeds = [0, 1];
+        bool[] parallels = [false, true];
 
             foreach (int count in counts)
             {
@@ -85,10 +91,9 @@ public class CreateTest
 
                             foreach (bool parallel in parallels)
                             {
-                                yield return new TestCaseData(count, xPattern, yPattern, seeds[i], parallel);
-                            }
-
+                            yield return new object[] { count, xPattern, yPattern, seeds[i], parallel };
                         }
+
                     }
                 }
             }

@@ -10,9 +10,9 @@
     <Authors>DevAM</Authors>
     <Company>DevAM</Company>
     <Product>BKDTree</Product>
-    <Version>1.4.0</Version>
-	<AssemblyVersion>1.4.0</AssemblyVersion>
-	<FileVersion>1.4.0</FileVersion>
+    <Version>2.0.0</Version>
+	  <AssemblyVersion>2.0.0</AssemblyVersion>
+	  <FileVersion>2.0.0</FileVersion>
     <Copyright>Copyright (c) 2024 DevAM. All Rights Reserved.</Copyright>
   </PropertyGroup>
 
@@ -22,8 +22,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="BenchmarkDotNet" Version="0.14.0" />
-    <PackageReference Include="BenchmarkDotNet.Annotations" Version="0.14.0" />
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.2" />
+    <PackageReference Include="BenchmarkDotNet.Annotations" Version="0.15.2" />
   </ItemGroup>
 
 </Project>

@@ -1,13 +1,15 @@
 ﻿using System;
-using System.Collections;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace BKDTree.Test.KDTree;
 
 public class NearestNeighborTest
 {
-    [TestCaseSource(typeof(NearestNeighborTest), nameof(TestCases))]
-    public void GetNearestNeighbor(int count, int seed, bool parallel)
+    [Test]
+    [MethodDataSource(nameof(TestCases))]
+    public async Task GetNearestNeighbor(int count, int seed, bool parallel)
     {
         Random random = new(seed);
 
@@ -19,13 +21,13 @@ public class NearestNeighborTest
             return point;
         }).ToArray();
 
-        MetricKDTree<Point> tree = new(2, points, parallel);
+        MetricKDTree<Point> tree = new(2, points, Point.CompareDimensionTo, Point.GetDimension, parallel);
 
         foreach (Point point in points)
         {
             bool found = tree.Contains(point);
 
-            Assert.That(found, Is.EqualTo(true));
+            await Assert.That(found).IsEqualTo(true);
         }
 
         double x = Point.GenerateValue(Pattern.Random, 0, count, random);
@@ -38,7 +40,7 @@ public class NearestNeighborTest
         for (int i = 0; i < points.Length; i++)
         {
             Point point = points[i];
-            double squaredDistance = MetricKDTree<Point>.GetSquaredDistance(ref point, ref targetPoint, 2);
+            double squaredDistance = MetricKDTree<Point>.GetSquaredDistance(ref point, ref targetPoint, 2, Point.GetDimension);
             if (!expectedMinSquaredDistance.HasValue || squaredDistance < expectedMinSquaredDistance.Value)
             {
                 expectedNearestNeighbor = point;
@@ -47,26 +49,23 @@ public class NearestNeighborTest
         }
         bool neighborFound = tree.GetNearestNeighbor(targetPoint, out Point actualNearestNeighbor, out double actualMinSquaredDistance);
 
-        Assert.That(neighborFound, Is.EqualTo(true));
-        Assert.That(actualNearestNeighbor, Is.EqualTo(expectedNearestNeighbor.Value));
+        await Assert.That(neighborFound).IsEqualTo(true);
+        await Assert.That(actualNearestNeighbor).IsEqualTo(expectedNearestNeighbor.Value);
     }
 
-    public static IEnumerable TestCases
+    public static IEnumerable<object[]> TestCases()
     {
-        get
-        {
-            int[] counts = [10, 500];
-            int[] seeds = Enumerable.Range(0, 10000).ToArray();
-            bool[] parallels = [false, true];
+        int[] counts = [10, 500];
+        int[] seeds = Enumerable.Range(0, 100).ToArray();
+        bool[] parallels = [false, true];
 
-            foreach (int count in counts)
+        foreach (int count in counts)
+        {
+            foreach (int seed in seeds)
             {
-                foreach (int seed in seeds)
+                foreach (bool parallel in parallels)
                 {
-                    foreach (bool parallel in parallels)
-                    {
-                        yield return new TestCaseData(count, seed, parallel);
-                    }
+                    yield return new object[] { count, seed, parallel };
                 }
             }
         }

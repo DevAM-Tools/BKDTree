@@ -1,15 +1,15 @@
-﻿using NUnit.Framework.Legacy;
-using System;
-using System.Collections;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 
 namespace BKDTree.Test;
 
 public class CreateTest
 {
-    [TestCaseSource(typeof(CreateTest), nameof(TestCases))]
-    public void Create(int blockSize, int count, Pattern xPattern, Pattern yPattern, int seed, bool parallel, bool bulkInsert)
+    [Test]
+    [MethodDataSource(nameof(TestCases))]
+    public async Task Create(int blockSize, int count, Pattern xPattern, Pattern yPattern, int seed, bool parallel, bool bulkInsert)
     {
         Random random = new(seed);
 
@@ -26,29 +26,29 @@ public class CreateTest
             .GroupBy(x => x)
             .ToDictionary(x => x.Key, x => x.ToArray());
 
-        BKDTree<Point> tree = new(2, blockSize, parallel);
+        BKDTree<Point> tree = new(2, Point.CompareDimensionTo, blockSize, parallel);
         for (int i = 0; i < count; i++)
         {
             Point point = points[i];
             tree.Insert(point);
 
-            Assert.That(tree.Count, Is.EqualTo(i + 1));
+            await Assert.That(tree.Count).IsEqualTo(i + 1);
         }
 
-        Assert.That(tree.Count, Is.EqualTo(points.Count));
+        await Assert.That(tree.Count).IsEqualTo(points.Count);
 
         if (bulkInsert)
         {
             tree.Insert(points);
 
-            Assert.That(tree.Count, Is.EqualTo(2 * points.Count));
+            await Assert.That(tree.Count).IsEqualTo(2 * points.Count);
         }
 
         foreach (Point point in points)
         {
             bool found = tree.Contains(point);
 
-            Assert.That(found, Is.EqualTo(true));
+            await Assert.That(found).IsEqualTo(true);
 
             Point[] expectedPoints = groupedPoints[point].ToArray();
 
@@ -58,57 +58,54 @@ public class CreateTest
                 existingPointsList.Add(point);
                 return false;
             });
-            CollectionAssert.AreEquivalent(expectedPoints, existingPointsList);
+            await Assert.That(existingPointsList).IsEquivalentTo(expectedPoints);
 
             Point[] existingPoints = tree.Get(point).ToArray();
 
-            CollectionAssert.AreEquivalent(expectedPoints, existingPoints);
+            await Assert.That(existingPoints).IsEquivalentTo(expectedPoints);
         }
     }
 
-    public static IEnumerable TestCases
+    public static IEnumerable<object[]> TestCases()
     {
-        get
+        int[] blockSizes = [2, 3, 4];
+        int[] counts = [0, 1, 2, 10, 50, 100, 500, 1000];
+        Pattern[] patterns = [
+            Pattern.Increasing,
+            Pattern.LowerHalfIncreasing,
+            Pattern.UpperHalfIncreasing,
+            Pattern.Decreasing,
+            Pattern.LowerHalfDecreasing,
+            Pattern.UpperHalfDecreasing,
+            Pattern.Random,
+            Pattern.Const,
+            Pattern.Alternating,
+            Pattern.ReverseAlternating,
+        ];
+        int[] seeds = [0, 1];
+        bool[] parallels = [false, true];
+        bool[] bulkInserts = [false, true];
+
+        foreach (int blockSize in blockSizes)
         {
-            int[] blockSizes = [2, 3, 4];
-            int[] counts = [10, 50, 100, 500];
-            Pattern[] patterns = [
-                Pattern.Increasing,
-                Pattern.LowerHalfIncreasing,
-                Pattern.UpperHalfIncreasing,
-                Pattern.Decreasing,
-                Pattern.LowerHalfDecreasing,
-                Pattern.UpperHalfDecreasing,
-                Pattern.Random,
-                Pattern.Const,
-                Pattern.Alternating,
-                Pattern.ReverseAlternating,
-            ];
-            int[] seeds = [0, 1, 2];
-            bool[] parallels = [false, true];
-            bool[] bulkInserts = [false, true];
-
-            foreach (int blockSize in blockSizes)
+            foreach (int count in counts)
             {
-                foreach (int count in counts)
+                foreach (Pattern xPattern in patterns)
                 {
-                    foreach (Pattern xPattern in patterns)
+                    foreach (Pattern yPattern in patterns)
                     {
-                        foreach (Pattern yPattern in patterns)
+                        for (int i = 0; i < seeds.Length; i++)
                         {
-                            for (int i = 0; i < seeds.Length; i++)
+                            if (xPattern != Pattern.Random && yPattern != Pattern.Random && i > 0)
                             {
-                                if (xPattern != Pattern.Random && yPattern != Pattern.Random && i > 0)
-                                {
-                                    continue;
-                                }
+                                continue;
+                            }
 
-                                foreach (bool parallel in parallels)
+                            foreach (bool parallel in parallels)
+                            {
+                                foreach (bool bulkInsert in bulkInserts)
                                 {
-                                    foreach (bool bulkInsert in bulkInserts)
-                                    {
-                                        yield return new TestCaseData(blockSize, count, xPattern, yPattern, seeds[i], parallel, bulkInsert);
-                                    }
+                                    yield return new object[] { blockSize, count, xPattern, yPattern, seeds[i], parallel, bulkInsert };
                                 }
                             }
                         }

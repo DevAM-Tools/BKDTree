@@ -4,21 +4,27 @@ using System.Diagnostics;
 
 namespace BKDTree;
 [DebuggerDisplay("Count: {Count}")]
-public class MetricKDTree<T> : KDTree<T> where T : IMetricTreeItem<T>
+public class MetricKDTree<T> : KDTree<T>
 {
-    public MetricKDTree(int dimensionCount, IEnumerable<T> values, bool parallel = false)
-        : base(dimensionCount, values, parallel ? Environment.ProcessorCount : 1)
+    internal readonly Func<T, int, double> GetDimension;
+
+    public MetricKDTree(int dimensionCount, IEnumerable<T> values, Func<T, T, int, int> compareDimensionTo, Func<T, int, double> getDimension, bool parallel = false)
+        : this(dimensionCount, values, compareDimensionTo, getDimension, parallel ? Environment.ProcessorCount : 1)
     {
     }
 
-    public MetricKDTree(int dimensionCount, IEnumerable<T> values, int maxThreadCount)
-        : base(dimensionCount, values, maxThreadCount)
+    public MetricKDTree(int dimensionCount, IEnumerable<T> values, Func<T, T, int, int> compareDimensionTo, Func<T, int, double> getDimension, int maxThreadCount)
+        : base(dimensionCount, values, compareDimensionTo, maxThreadCount)
     {
+        GetDimension = getDimension
+            ?? throw new ArgumentNullException(nameof(getDimension));
     }
 
-    internal MetricKDTree(int dimensionCount, IList<Segment<T>> values, DimensionalComparer<T>[] comparers, int maxThreadCount)
-        : base(dimensionCount, values, comparers, maxThreadCount)
+    internal MetricKDTree(int dimensionCount, IList<Segment<T>> values, Func<T, T, int, int> compareDimensionTo, Func<T, int, double> getDimension, DimensionalComparer<T>[] comparers, int maxThreadCount)
+        : base(dimensionCount, values, compareDimensionTo, comparers, maxThreadCount)
     {
+        GetDimension = getDimension
+            ?? throw new ArgumentNullException(nameof(getDimension));
     }
 
     /// <summary>
@@ -55,7 +61,7 @@ public class MetricKDTree<T> : KDTree<T> where T : IMetricTreeItem<T>
         ref T midValue = ref Values[midIndex];
         bool dirty = Dirties[midIndex];
 
-        double squaredDistance = GetSquaredDistance(ref value, ref midValue, DimensionCount);
+        double squaredDistance = GetSquaredDistance(ref value, ref midValue, DimensionCount, GetDimension);
 
         if (!minSquaredDistance.HasValue || squaredDistance < minSquaredDistance.Value)
         {
@@ -64,7 +70,7 @@ public class MetricKDTree<T> : KDTree<T> where T : IMetricTreeItem<T>
         }
 
         int nextDimension = (dimension + 1) % DimensionCount;
-        int comparisonResult = value.CompareDimensionTo(midValue, dimension);
+        int comparisonResult = CompareDimensionTo(value, midValue, dimension);
 
         bool wasRight = false;
         bool forceLeft = false;
@@ -81,7 +87,7 @@ public class MetricKDTree<T> : KDTree<T> where T : IMetricTreeItem<T>
                 wasRight = true;
             }
 
-            double limitSquaredDistance = midValue.GetDimension(dimension) - value.GetDimension(dimension);
+            double limitSquaredDistance = GetDimension(midValue, dimension) - GetDimension(value, dimension);
             limitSquaredDistance *= limitSquaredDistance;
 
             if (!minSquaredDistance.HasValue || limitSquaredDistance < minSquaredDistance.Value)
@@ -102,7 +108,7 @@ public class MetricKDTree<T> : KDTree<T> where T : IMetricTreeItem<T>
 
             if (!wasRight)
             {
-                double squaredDistanceToLimit = midValue.GetDimension(dimension) - value.GetDimension(dimension);
+                double squaredDistanceToLimit = GetDimension(midValue, dimension) - GetDimension(value, dimension);
                 squaredDistanceToLimit *= squaredDistanceToLimit;
 
                 if (!minSquaredDistance.HasValue || squaredDistanceToLimit < minSquaredDistance.Value)
@@ -119,12 +125,12 @@ public class MetricKDTree<T> : KDTree<T> where T : IMetricTreeItem<T>
         }
     }
 
-    public static double GetSquaredDistance(ref T source, ref T target, int dimensionCount)
+    public static double GetSquaredDistance(ref T source, ref T target, int dimensionCount, Func<T, int, double> getDimension)
     {
         double result = 0;
         for (int dimension = 0; dimension < dimensionCount; dimension++)
         {
-            double diff = target.GetDimension(dimension) - source.GetDimension(dimension);
+            double diff = getDimension(target, dimension) - getDimension(source, dimension);
 
             result += diff * diff;
         }
