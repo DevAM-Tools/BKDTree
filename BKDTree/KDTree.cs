@@ -9,26 +9,43 @@ using System.Threading.Tasks;
 namespace BKDTree;
 
 [DebuggerDisplay("Count: {Count}")]
-public class KDTree<T>
+public class KDTree<T, TComparer>
+    where T : notnull
+    where TComparer : struct, IDimensionalComparer<T>
 {
+    /// <summary>
+    /// Minimum number of elements in a subtree before parallel construction is considered.
+    /// Below this threshold, the overhead of thread management outweighs parallelization benefits.
+    /// Benchmarks show that 4096 provides better performance than lower values due to reduced
+    /// thread coordination overhead.
+    /// </summary>
+    internal const int ParallelConstructionThreshold = 4096;
+
+    /// <summary>
+    /// Maximum theoretical recursion depth for tree operations.
+    /// For a balanced tree with N elements, the maximum depth is log2(N).
+    /// With 2^31 elements (int.MaxValue), max depth is 31 levels - well within stack limits.
+    /// The tree construction ensures balance by using median partitioning.
+    /// </summary>
+    internal const int MaxTheoreticalDepth = 31;
+
     internal readonly int DimensionCount;
     internal readonly T[] Values;
     internal readonly bool[] Dirties;
-    internal readonly Func<T, T, int, int> CompareDimensionTo;
+    internal readonly TComparer Comparer;
 
     public int Count => Values.Length;
 
-    private class Box(int value)
+    // Thread count stored in array to allow Interlocked operations without boxing
+    // Using array instead of class reduces allocations
+    private static int[] CreateThreadCounter() => [1];
+
+    public KDTree(int dimensionCount, IEnumerable<T> values, TComparer comparer, bool parallel = false)
+        : this(dimensionCount, values, comparer, parallel ? Environment.ProcessorCount : 1)
     {
-        public volatile int Value = value;
     }
 
-    public KDTree(int dimensionCount, IEnumerable<T> values, Func<T, T, int, int> compareDimensionTo, bool parallel = false)
-        : this(dimensionCount, values, compareDimensionTo, parallel ? Environment.ProcessorCount : 1)
-    {
-    }
-
-    public KDTree(int dimensionCount, IEnumerable<T> values, Func<T, T, int, int> compareDimensionTo, int maxThreadCount)
+    public KDTree(int dimensionCount, IEnumerable<T> values, TComparer comparer, int maxThreadCount)
     {
         if (dimensionCount <= 0)
         {
@@ -40,10 +57,10 @@ public class KDTree<T>
             throw new ArgumentNullException(nameof(values));
         }
 
-        CompareDimensionTo = compareDimensionTo
-            ?? throw new ArgumentNullException(nameof(compareDimensionTo));
+        Comparer = comparer;
         DimensionCount = dimensionCount;
-        Values = values.ToArray();
+        // Avoid unnecessary array allocation if values is already an array
+        Values = values as T[] ?? values.ToArray();
 
         if (Values.Length == 0)
         {
@@ -52,23 +69,23 @@ public class KDTree<T>
 
         Dirties = new bool[Values.Length];
 
-        DimensionalComparer<T>[] comparers = new DimensionalComparer<T>[DimensionCount];
+        DimensionalComparer<T, TComparer>[] comparers = new DimensionalComparer<T, TComparer>[DimensionCount];
         for (int dimension = 0; dimension < DimensionCount; dimension++)
         {
-            comparers[dimension] = new(dimension, CompareDimensionTo);
+            comparers[dimension] = new(dimension, Comparer);
         }
 
-        Box threadCount = new(1);
+        int[] threadCount = CreateThreadCounter();
         maxThreadCount = Math.Max(1, Math.Min(Environment.ProcessorCount, maxThreadCount));
         Build(0, Values.Length - 1, 0, comparers, threadCount, maxThreadCount);
     }
 
-    internal KDTree(int dimensionCount, IList<Segment<T>> values, Func<T, T, int, int> compareDimensionTo, DimensionalComparer<T>[] comparers, bool parallel = false)
-        : this(dimensionCount, values, compareDimensionTo, comparers, parallel ? Environment.ProcessorCount : 1)
+    internal KDTree(int dimensionCount, IList<Segment<T>> values, TComparer comparer, DimensionalComparer<T, TComparer>[] comparers, bool parallel = false)
+        : this(dimensionCount, values, comparer, comparers, parallel ? Environment.ProcessorCount : 1)
     {
     }
 
-    internal KDTree(int dimensionCount, IList<Segment<T>> values, Func<T, T, int, int> compareDimensionTo, DimensionalComparer<T>[] comparers, int maxThreadCount)
+    internal KDTree(int dimensionCount, IList<Segment<T>> values, TComparer comparer, DimensionalComparer<T, TComparer>[] comparers, int maxThreadCount)
     {
         if (dimensionCount <= 0)
         {
@@ -85,8 +102,7 @@ public class KDTree<T>
             throw new ArgumentException("Values collection cannot be empty.", nameof(values));
         }
 
-        CompareDimensionTo = compareDimensionTo
-            ?? throw new ArgumentNullException(nameof(compareDimensionTo));
+        Comparer = comparer;
         DimensionCount = dimensionCount;
 
         long count = 0L;
@@ -104,61 +120,59 @@ public class KDTree<T>
         Dirties = new bool[count];
 
         maxThreadCount = Math.Max(1, Math.Min(Environment.ProcessorCount, maxThreadCount));
-        if (maxThreadCount > 1)
+        
+        // Pre-compute segment start indices
+        int[] segmentIndices = new int[values.Count];
+        int currentIndex = 0;
+        for (int i = 0; i < values.Count; i++)
         {
-            IEnumerable<(Segment<T> Segment, int Index)> GetIndex()
-            {
-                int index = 0;
-                for (int i = 0; i < values.Count; i++)
-                {
-                    Segment<T> segment = values[i];
-                    yield return (segment, index);
-                    index += segment.Length;
-                }
-            }
-
-            GetIndex()
-                .AsParallel()
-                .WithDegreeOfParallelism(maxThreadCount)
-                .ForAll(parameter =>
-                {
-                    if (parameter.Segment.Values is T[] array)
-                    {
-                        Array.Copy(array, parameter.Segment.Offset, Values, parameter.Index, parameter.Segment.Length);
-                    }
-                    else if (parameter.Segment.Values is List<T> list)
-                    {
-                        list.CopyTo(parameter.Segment.Offset, Values, parameter.Index, parameter.Segment.Length);
-                    }
-                });
+            segmentIndices[i] = currentIndex;
+            currentIndex += values[i].Length;
         }
-        else
+
+        if (maxThreadCount > 1 && values.Count > 1)
         {
-            int index = 0;
-            for (int i = 0; i < values.Count; i++)
+            // Use Parallel.For instead of PLINQ for less allocation overhead
+            Parallel.For(0, values.Count, new ParallelOptions { MaxDegreeOfParallelism = maxThreadCount }, i =>
             {
                 Segment<T> segment = values[i];
+                int targetIndex = segmentIndices[i];
                 if (segment.Values is T[] array)
                 {
-                    Array.Copy(array, segment.Offset, Values, index, segment.Length);
+                    Array.Copy(array, segment.Offset, Values, targetIndex, segment.Length);
                 }
                 else if (segment.Values is List<T> list)
                 {
-                    list.CopyTo(segment.Offset, Values, index, segment.Length);
+                    list.CopyTo(segment.Offset, Values, targetIndex, segment.Length);
                 }
-                index += segment.Length;
+            });
+        }
+        else
+        {
+            for (int i = 0; i < values.Count; i++)
+            {
+                Segment<T> segment = values[i];
+                int targetIndex = segmentIndices[i];
+                if (segment.Values is T[] array)
+                {
+                    Array.Copy(array, segment.Offset, Values, targetIndex, segment.Length);
+                }
+                else if (segment.Values is List<T> list)
+                {
+                    list.CopyTo(segment.Offset, Values, targetIndex, segment.Length);
+                }
             }
         }
 
-        Box threadCount = new(1);
+        int[] threadCount = CreateThreadCounter();
         Build(0, Values.Length - 1, 0, comparers, threadCount, maxThreadCount);
     }
 
-    private void Build(int leftIndex, int rightIndex, int dimension, DimensionalComparer<T>[] comparers, Box threadCount, int maxThreadCount)
+    private void Build(int leftIndex, int rightIndex, int dimension, DimensionalComparer<T, TComparer>[] comparers, int[] threadCount, int maxThreadCount)
     {
         int count = rightIndex + 1 - leftIndex;
 
-        DimensionalComparer<T> comparer = comparers[dimension];
+        DimensionalComparer<T, TComparer> comparer = comparers[dimension];
         Array.Sort(Values, Dirties, leftIndex, count, comparer);
 
         int midIndex = (rightIndex + leftIndex) / 2;
@@ -168,7 +182,7 @@ public class KDTree<T>
 
         midDirty = index < midIndex;
 
-        int nextDimension = (dimension + 1) % DimensionCount;
+        int nextDimension = NextDimension(dimension);
 
         int leftNextLeftIndex = leftIndex;
         int leftNextRightIndex = midIndex - 1;
@@ -177,7 +191,7 @@ public class KDTree<T>
         if (leftNextRightIndex >= leftNextLeftIndex)
         {
             int nextSpanSize = leftNextRightIndex - leftNextLeftIndex;
-            if (maxThreadCount > 0 && nextSpanSize >= 512 && DoInParallel(threadCount, maxThreadCount))
+            if (maxThreadCount > 1 && nextSpanSize >= ParallelConstructionThreshold && DoInParallel(threadCount, maxThreadCount))
             {
                 leftTask = Task.Run(() =>
                 {
@@ -197,7 +211,7 @@ public class KDTree<T>
         if (rightNextRightIndex >= rightNextLeftIndex)
         {
             int nextSpanSize = rightNextRightIndex - rightNextLeftIndex;
-            if (maxThreadCount > 0 && nextSpanSize >= 512 && DoInParallel(threadCount, maxThreadCount))
+            if (maxThreadCount > 1 && nextSpanSize >= ParallelConstructionThreshold && DoInParallel(threadCount, maxThreadCount))
             {
                 rightTask = Task.Run(() =>
                 {
@@ -213,26 +227,27 @@ public class KDTree<T>
         if (leftTask is not null)
         {
             leftTask.Wait();
-            Interlocked.Decrement(ref threadCount.Value);
+            Interlocked.Decrement(ref threadCount[0]);
         }
         if (rightTask is not null)
         {
             rightTask.Wait();
-            Interlocked.Decrement(ref threadCount.Value);
+            Interlocked.Decrement(ref threadCount[0]);
         }
     }
 
-    private bool DoInParallel(Box threadCount, int maxThreadCount)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private static bool DoInParallel(int[] threadCount, int maxThreadCount)
     {
         while (true)
         {
-            int currentThreadCount = threadCount.Value;
+            int currentThreadCount = Volatile.Read(ref threadCount[0]);
             if (currentThreadCount >= maxThreadCount)
             {
                 return false;
             }
 
-            int previousThreadCount = Interlocked.CompareExchange(ref threadCount.Value, currentThreadCount + 1, currentThreadCount);
+            int previousThreadCount = Interlocked.CompareExchange(ref threadCount[0], currentThreadCount + 1, currentThreadCount);
             if (previousThreadCount == currentThreadCount)
             {
                 return true;
@@ -240,6 +255,7 @@ public class KDTree<T>
         }
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     private int FindFirstIndexOf(ref T value, int leftIndex, int rightIndex, int dimension)
     {
         int midIndex = leftIndex;
@@ -249,7 +265,7 @@ public class KDTree<T>
         {
             midIndex = (rightIndex + leftIndex) / 2;
             ref T currentValue = ref Values[midIndex];
-            compareResult = CompareDimensionTo(value, currentValue, dimension);
+            compareResult = Comparer.Compare(in value, in currentValue, dimension);
 
             if (compareResult < 0)
             {
@@ -287,11 +303,12 @@ public class KDTree<T>
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static bool IsEqualTo(T left, T right, int dimensionCount, Func<T, T, int, int> compareDimensionTo)
+    private bool IsEqualTo(in T left, in T right)
     {
+        int dimensionCount = DimensionCount;
         for (int dimension = 0; dimension < dimensionCount; dimension++)
         {
-            if (compareDimensionTo(left, right, dimension) != 0)
+            if (Comparer.Compare(in left, in right, dimension) != 0)
             {
                 return false;
             }
@@ -300,25 +317,12 @@ public class KDTree<T>
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static bool IsKeyLessThanOrEqualToLimit(T value, T limit, int dimensionCount, Func<T, T, int, int> compareDimensionTo)
+    private bool IsKeyLessThanOrEqualToLimit(in T value, in T limit)
     {
+        int dimensionCount = DimensionCount;
         for (int dimension = 0; dimension < dimensionCount; dimension++)
         {
-            if (compareDimensionTo(value, limit, dimension) > 0)
-            {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static bool IsKeyLessThanLimit(T value, T limit, int dimensionCount, Func<T, T, int, int> compareDimensionTo)
-    {
-        for (int dimension = 0; dimension < dimensionCount; dimension++)
-        {
-            if (compareDimensionTo(value, limit, dimension) >= 0)
+            if (Comparer.Compare(in value, in limit, dimension) > 0)
             {
                 return false;
             }
@@ -328,11 +332,27 @@ public class KDTree<T>
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static bool IsKeyGreaterThanOrEqualToLimit(T value, T limit, int dimensionCount, Func<T, T, int, int> compareDimensionTo)
+    private bool IsKeyLessThanLimit(in T value, in T limit)
     {
+        int dimensionCount = DimensionCount;
         for (int dimension = 0; dimension < dimensionCount; dimension++)
         {
-            if (compareDimensionTo(value, limit, dimension) < 0)
+            if (Comparer.Compare(in value, in limit, dimension) >= 0)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private bool IsKeyGreaterThanOrEqualToLimit(in T value, in T limit)
+    {
+        int dimensionCount = DimensionCount;
+        for (int dimension = 0; dimension < dimensionCount; dimension++)
+        {
+            if (Comparer.Compare(in value, in limit, dimension) < 0)
             {
                 return false;
             }
@@ -342,16 +362,28 @@ public class KDTree<T>
     }
 
     /// <summary>
+    /// Calculates the next dimension index with wraparound.
+    /// Optimized for common cases (especially 2D where it becomes dimension ^ 1).
+    /// </summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private int NextDimension(int dimension)
+    {
+        int next = dimension + 1;
+        return next == DimensionCount ? 0 : next;
+    }
+
+    /// <summary>
     /// Gets all values. Consider using <see cref="DoForEach(Action{T})"/> ot <see cref="DoForEach(Func{T, bool})"/> if performance is critical.
     /// </summary>
     /// <returns></returns>
-    public IEnumerable<T> GetAll()
-    {
-        foreach (T value in Values)
-        {
-            yield return value;
-        }
-    }
+    public IEnumerable<T> GetAll() => Values;
+
+    /// <summary>
+    /// Gets an allocation-free enumerable over all values.
+    /// Can be used with foreach but cannot be stored or used with async/await.
+    /// </summary>
+    /// <returns>A ref struct enumerable for allocation-free iteration.</returns>
+    public ValueEnumerable<T> GetAllFast() => new(Values);
 
     /// <summary>
     /// Performs an <paramref name="action"/> for every value. Prefer this over <see cref="GetAll()"/> in performance critical paths.
@@ -363,11 +395,8 @@ public class KDTree<T>
         {
             return;
         }
-
-        foreach (T value in Values)
-        {
-            action.Invoke(value);
-        }
+        ActionWrapper<T> wrapper = new(action);
+        DoForEach(ref wrapper);
     }
 
     /// <summary>
@@ -381,16 +410,51 @@ public class KDTree<T>
         {
             return false;
         }
+        FuncWrapper<T> wrapper = new(actionAndCancelFunction);
+        return DoForEach(ref wrapper);
+    }
 
-        foreach (T value in Values)
+    /// <summary>
+    /// Applies a struct callback to every value with cancellation support for maximum performance.
+    /// The struct callback eliminates delegate allocation and allows full JIT inlining.
+    /// </summary>
+    /// <typeparam name="TFunc">The struct type implementing IForEachFunc</typeparam>
+    /// <param name="func">The struct callback that will be invoked for every value.</param>
+    /// <returns>true if the iteration was canceled otherwise false</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool DoForEach<TFunc>(ref TFunc func)
+        where TFunc : struct, IForEachFunc<T>
+    {
+        T[] values = Values;
+        for (int i = 0; i < values.Length; i++)
         {
-            bool cancel = actionAndCancelFunction.Invoke(value);
-            if (cancel)
+            if (func.Invoke(values[i]))
             {
                 return true;
             }
         }
+        return false;
+    }
 
+    /// <summary>
+    /// Applies a struct callback with ref readonly parameter to every value with cancellation support.
+    /// Use this for large structs to avoid copying. The struct callback eliminates delegate allocation.
+    /// </summary>
+    /// <typeparam name="TFunc">The struct type implementing IForEachRefFunc</typeparam>
+    /// <param name="func">The struct callback that will be invoked for every value.</param>
+    /// <returns>true if the iteration was canceled otherwise false</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool DoForEachRef<TFunc>(ref TFunc func)
+        where TFunc : struct, IForEachRefFunc<T>
+    {
+        T[] values = Values;
+        for (int i = 0; i < values.Length; i++)
+        {
+            if (func.Invoke(in values[i]))
+            {
+                return true;
+            }
+        }
         return false;
     }
 
@@ -418,13 +482,13 @@ public class KDTree<T>
         T midValue = Values[midIndex];
         bool dirty = Dirties[midIndex];
 
-        if (IsEqualTo(value, midValue, DimensionCount, CompareDimensionTo))
+        if (IsEqualTo(in value, in midValue))
         {
             yield return midValue;
         }
 
-        int nextDimension = (dimension + 1) % DimensionCount;
-        int comparisonResult = CompareDimensionTo(value, midValue, dimension);
+        int nextDimension = NextDimension(dimension);
+        int comparisonResult = Comparer.Compare(in value, in midValue, dimension);
 
         if (comparisonResult >= 0)
         {
@@ -464,36 +528,53 @@ public class KDTree<T>
     /// <exception cref="ArgumentNullException"></exception>
     public bool DoForEach(T value, Func<T, bool> actionAndCancelFunction)
     {
-        if (value is null)
-        {
-            throw new ArgumentNullException(nameof(value));
-        }
         if (actionAndCancelFunction is null)
         {
             return false;
         }
-
-        return DoForEach(value, actionAndCancelFunction, 0, Count - 1, 0);
+        FuncWrapper<T> wrapper = new(actionAndCancelFunction);
+        return DoForEach(value, ref wrapper);
     }
 
-    internal bool DoForEach(T value, Func<T, bool> actionAndCancelFunction, int leftIndex, int rightIndex, int dimension)
+    /// <summary>
+    /// Applies a struct callback to every matching value with cancellation support for maximum performance.
+    /// The struct callback eliminates delegate allocation and allows full JIT inlining.
+    /// </summary>
+    /// <typeparam name="TFunc">The struct type implementing IForEachFunc</typeparam>
+    /// <param name="value">The value to search for</param>
+    /// <param name="func">The struct callback that will be invoked for every matching value.</param>
+    /// <returns>true if the iteration was canceled otherwise false</returns>
+    /// <exception cref="ArgumentNullException"></exception>
+    public bool DoForEach<TFunc>(T value, ref TFunc func)
+        where TFunc : struct, IForEachFunc<T>
+    {
+        if (value is null)
+        {
+            throw new ArgumentNullException(nameof(value));
+        }
+
+        return DoForEachInternal(value, ref func, 0, Count - 1, 0);
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool DoForEachInternal<TFunc>(T value, ref TFunc func, int leftIndex, int rightIndex, int dimension)
+        where TFunc : struct, IForEachFunc<T>
     {
         int midIndex = (rightIndex + leftIndex) / 2;
 
         ref T midValue = ref Values[midIndex];
         bool dirty = Dirties[midIndex];
 
-        if (IsEqualTo(value, midValue, DimensionCount, CompareDimensionTo))
+        if (IsEqualTo(in value, in midValue))
         {
-            bool cancel = actionAndCancelFunction.Invoke(midValue);
-            if (cancel)
+            if (func.Invoke(midValue))
             {
                 return true;
             }
         }
 
-        int nextDimension = (dimension + 1) % DimensionCount;
-        int comparisonResult = CompareDimensionTo(value, midValue, dimension);
+        int nextDimension = NextDimension(dimension);
+        int comparisonResult = Comparer.Compare(in value, in midValue, dimension);
 
         if (comparisonResult >= 0)
         {
@@ -502,8 +583,7 @@ public class KDTree<T>
 
             if (nextRightIndex >= nextLeftIndex)
             {
-                bool cancel = DoForEach(value, actionAndCancelFunction, nextLeftIndex, nextRightIndex, nextDimension);
-                if (cancel)
+                if (DoForEachInternal(value, ref func, nextLeftIndex, nextRightIndex, nextDimension))
                 {
                     return true;
                 }
@@ -517,8 +597,7 @@ public class KDTree<T>
 
             if (nextRightIndex >= nextLeftIndex)
             {
-                bool cancel = DoForEach(value, actionAndCancelFunction, nextLeftIndex, nextRightIndex, nextDimension);
-                if (cancel)
+                if (DoForEachInternal(value, ref func, nextLeftIndex, nextRightIndex, nextDimension))
                 {
                     return true;
                 }
@@ -543,12 +622,31 @@ public class KDTree<T>
         {
             return false;
         }
+        FuncWrapper<T> wrapper = new(actionAndCancelFunction);
+        return DoForEach(ref wrapper, lowerLimit, upperLimit, upperLimitInclusive);
+    }
 
+    /// <summary>
+    /// Applies a struct callback for every single item within an optional inclusive lower limit and an optional upper limit.
+    /// The struct callback eliminates delegate allocation and allows full JIT inlining.
+    /// </summary>
+    /// <typeparam name="TFunc">The struct type implementing IForEachFunc</typeparam>
+    /// <param name="func">The struct callback that will be invoked for every matching value.</param>
+    /// <param name="lowerLimit">Optional inclusive lower limit</param>
+    /// <param name="upperLimit">Optional upper limit</param>
+    /// <param name="upperLimitInclusive">The upper limit is inclusive if true otherwise the upper limit is exclusive</param>
+    /// <returns>true if the operation was canceled otherwise false</returns>
+    public bool DoForEach<TFunc>(ref TFunc func, Option<T> lowerLimit, Option<T> upperLimit, bool upperLimitInclusive)
+        where TFunc : struct, IForEachFunc<T>
+    {
         if (lowerLimit.HasValue && upperLimit.HasValue)
         {
-            for (int dimension = 0; dimension < DimensionCount; dimension++)
+            int dimensionCount = DimensionCount;
+            for (int dimension = 0; dimension < dimensionCount; dimension++)
             {
-                int comparisonResult = CompareDimensionTo(lowerLimit.Value, upperLimit.Value, dimension);
+                T lowerVal = lowerLimit.Value;
+                T upperVal = upperLimit.Value;
+                int comparisonResult = Comparer.Compare(in lowerVal, in upperVal, dimension);
 
                 if (comparisonResult > 0)
                 {
@@ -557,24 +655,25 @@ public class KDTree<T>
             }
         }
 
-        return DoForEach(actionAndCancelFunction, ref lowerLimit, ref upperLimit, upperLimitInclusive, 0, Count - 1, 0);
+        return DoForEachInternal(ref func, ref lowerLimit, ref upperLimit, upperLimitInclusive, 0, Count - 1, 0);
     }
 
-    internal bool DoForEach(Func<T, bool> actionAndCancelFunction, ref Option<T> lowerLimit, ref Option<T> upperLimit, bool upperLimitInclusive, int leftIndex, int rightIndex, int dimension)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal bool DoForEachInternal<TFunc>(ref TFunc func, ref Option<T> lowerLimit, ref Option<T> upperLimit, bool upperLimitInclusive, int leftIndex, int rightIndex, int dimension)
+        where TFunc : struct, IForEachFunc<T>
     {
         int midIndex = (rightIndex + leftIndex) / 2;
 
         ref T midValue = ref Values[midIndex];
         bool dirty = Dirties[midIndex];
 
-        if (!lowerLimit.HasValue || IsKeyGreaterThanOrEqualToLimit(midValue, lowerLimit.Value, DimensionCount, CompareDimensionTo))
+        if (!lowerLimit.HasValue || IsKeyGreaterThanOrEqualToLimit(midValue, lowerLimit.Value))
         {
             if (upperLimitInclusive)
             {
-                if (!upperLimit.HasValue || IsKeyLessThanOrEqualToLimit(midValue, upperLimit.Value, DimensionCount, CompareDimensionTo))
+                if (!upperLimit.HasValue || IsKeyLessThanOrEqualToLimit(midValue, upperLimit.Value))
                 {
-                    bool cancel = actionAndCancelFunction.Invoke(midValue);
-                    if (cancel)
+                    if (func.Invoke(midValue))
                     {
                         return true;
                     }
@@ -582,10 +681,9 @@ public class KDTree<T>
             }
             else
             {
-                if (!upperLimit.HasValue || IsKeyLessThanLimit(midValue, upperLimit.Value, DimensionCount, CompareDimensionTo))
+                if (!upperLimit.HasValue || IsKeyLessThanLimit(midValue, upperLimit.Value))
                 {
-                    bool cancel = actionAndCancelFunction.Invoke(midValue);
-                    if (cancel)
+                    if (func.Invoke(midValue))
                     {
                         return true;
                     }
@@ -593,37 +691,52 @@ public class KDTree<T>
             }
         }
 
-        int nextDimension = (dimension + 1) % DimensionCount;
+        int nextDimension = NextDimension(dimension);
 
-        int? upperLimitComparisonResult = upperLimit.HasValue ? CompareDimensionTo(upperLimit.Value, midValue, dimension) : null;
+        int upperLimitComparisonResult;
+        if (upperLimit.HasValue)
+        {
+            T upperVal = upperLimit.Value;
+            upperLimitComparisonResult = Comparer.Compare(in upperVal, in midValue, dimension);
+        }
+        else
+        {
+            upperLimitComparisonResult = int.MaxValue;
+        }
 
-        if (!upperLimitComparisonResult.HasValue || upperLimitComparisonResult.Value >= 0)
+        if (upperLimitComparisonResult >= 0)
         {
             int nextLeftIndex = midIndex + 1;
             int nextRightIndex = rightIndex;
 
             if (nextRightIndex >= nextLeftIndex)
             {
-                bool cancel = DoForEach(actionAndCancelFunction, ref lowerLimit, ref upperLimit, upperLimitInclusive, nextLeftIndex, nextRightIndex, nextDimension);
-                if (cancel)
+                if (DoForEachInternal(ref func, ref lowerLimit, ref upperLimit, upperLimitInclusive, nextLeftIndex, nextRightIndex, nextDimension))
                 {
                     return true;
                 }
             }
         }
 
-        int? lowerLimitComparisonResult = lowerLimit.HasValue ? CompareDimensionTo(lowerLimit.Value, midValue, dimension) : null;
+        int lowerLimitComparisonResult;
+        if (lowerLimit.HasValue)
+        {
+            T lowerVal = lowerLimit.Value;
+            lowerLimitComparisonResult = Comparer.Compare(in lowerVal, in midValue, dimension);
+        }
+        else
+        {
+            lowerLimitComparisonResult = int.MinValue;
+        }
 
-        if (!lowerLimitComparisonResult.HasValue || lowerLimitComparisonResult <= 0
-            || (dirty && upperLimitComparisonResult == 0))
+        if (lowerLimitComparisonResult <= 0 || (dirty && upperLimitComparisonResult == 0))
         {
             int nextLeftIndex = leftIndex;
             int nextRightIndex = midIndex - 1;
 
             if (nextRightIndex >= nextLeftIndex)
             {
-                bool cancel = DoForEach(actionAndCancelFunction, ref lowerLimit, ref upperLimit, upperLimitInclusive, nextLeftIndex, nextRightIndex, nextDimension);
-                if (cancel)
+                if (DoForEachInternal(ref func, ref lowerLimit, ref upperLimit, upperLimitInclusive, nextLeftIndex, nextRightIndex, nextDimension))
                 {
                     return true;
                 }
@@ -650,6 +763,7 @@ public class KDTree<T>
         return contains;
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool Contains(T value, int leftIndex, int rightIndex, int dimension)
     {
         int midIndex = (rightIndex + leftIndex) / 2;
@@ -657,43 +771,29 @@ public class KDTree<T>
         ref T midValue = ref Values[midIndex];
         bool dirty = Dirties[midIndex];
 
-        if (IsEqualTo(value, midValue, DimensionCount, CompareDimensionTo))
+        if (IsEqualTo(in value, in midValue))
         {
             return true;
         }
 
-        int nextDimension = (dimension + 1) % DimensionCount;
-        int comparisonResult = CompareDimensionTo(value, midValue, dimension);
+        int nextDimension = NextDimension(dimension);
+        int comparisonResult = Comparer.Compare(in value, in midValue, dimension);
 
         if (comparisonResult >= 0)
         {
             int nextLeftIndex = midIndex + 1;
-            int nextRightIndex = rightIndex;
-
-            if (nextRightIndex >= nextLeftIndex)
+            if (rightIndex >= nextLeftIndex && Contains(value, nextLeftIndex, rightIndex, nextDimension))
             {
-                bool found = Contains(value, nextLeftIndex, nextRightIndex, nextDimension);
-
-                if (found)
-                {
-                    return true;
-                }
+                return true;
             }
         }
 
         if (comparisonResult < 0 || (dirty && comparisonResult == 0))
         {
-            int nextLeftIndex = leftIndex;
             int nextRightIndex = midIndex - 1;
-
-            if (nextRightIndex >= nextLeftIndex)
+            if (nextRightIndex >= leftIndex && Contains(value, leftIndex, nextRightIndex, nextDimension))
             {
-                bool found = Contains(value, nextLeftIndex, nextRightIndex, nextDimension);
-
-                if (found)
-                {
-                    return true;
-                }
+                return true;
             }
         }
 
@@ -715,7 +815,9 @@ public class KDTree<T>
         {
             for (int dimension = 0; dimension < DimensionCount; dimension++)
             {
-                int comparisonResult = CompareDimensionTo(lowerLimit.Value, upperLimit.Value, dimension);
+                T lowerVal = lowerLimit.Value;
+                T upperVal = upperLimit.Value;
+                int comparisonResult = Comparer.Compare(in lowerVal, in upperVal, dimension);
 
                 if (comparisonResult > 0)
                 {
@@ -727,6 +829,7 @@ public class KDTree<T>
         return TryGetFirst(ref lowerLimit, ref upperLimit, upperLimitInclusive, 0, Count - 1, 0, ref value);
     }
 
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
     internal bool TryGetFirst(ref Option<T> lowerLimit, ref Option<T> upperLimit, bool upperLimitInclusive, int leftIndex, int rightIndex, int dimension, ref T value)
     {
         int midIndex = (rightIndex + leftIndex) / 2;
@@ -734,11 +837,11 @@ public class KDTree<T>
         ref T midValue = ref Values[midIndex];
         bool dirty = Dirties[midIndex];
 
-        if (!lowerLimit.HasValue || IsKeyGreaterThanOrEqualToLimit(midValue, lowerLimit.Value, DimensionCount, CompareDimensionTo))
+        if (!lowerLimit.HasValue || IsKeyGreaterThanOrEqualToLimit(midValue, lowerLimit.Value))
         {
             if (upperLimitInclusive)
             {
-                if (!upperLimit.HasValue || IsKeyLessThanOrEqualToLimit(midValue, upperLimit.Value, DimensionCount, CompareDimensionTo))
+                if (!upperLimit.HasValue || IsKeyLessThanOrEqualToLimit(midValue, upperLimit.Value))
                 {
                     value = midValue;
                     return true;
@@ -746,7 +849,7 @@ public class KDTree<T>
             }
             else
             {
-                if (!upperLimit.HasValue || IsKeyLessThanLimit(midValue, upperLimit.Value, DimensionCount, CompareDimensionTo))
+                if (!upperLimit.HasValue || IsKeyLessThanLimit(midValue, upperLimit.Value))
                 {
                     value = midValue;
                     return true;
@@ -754,11 +857,21 @@ public class KDTree<T>
             }
         }
 
-        int nextDimension = (dimension + 1) % DimensionCount;
+        int nextDimension = NextDimension(dimension);
 
-        int? upperLimitComparisonResult = upperLimit.HasValue ? CompareDimensionTo(upperLimit.Value, midValue, dimension) : null;
+        // Use int with sentinel instead of nullable to avoid boxing
+        int upperLimitComparisonResult;
+        if (upperLimit.HasValue)
+        {
+            T upperVal = upperLimit.Value;
+            upperLimitComparisonResult = Comparer.Compare(in upperVal, in midValue, dimension);
+        }
+        else
+        {
+            upperLimitComparisonResult = int.MaxValue;
+        }
 
-        if (!upperLimitComparisonResult.HasValue || upperLimitComparisonResult.Value >= 0)
+        if (upperLimitComparisonResult >= 0)
         {
             int nextLeftIndex = midIndex + 1;
             int nextRightIndex = rightIndex;
@@ -773,10 +886,18 @@ public class KDTree<T>
             }
         }
 
-        int? lowerLimitComparisonResult = lowerLimit.HasValue ? CompareDimensionTo(lowerLimit.Value, midValue, dimension) : null;
+        int lowerLimitComparisonResult;
+        if (lowerLimit.HasValue)
+        {
+            T lowerVal = lowerLimit.Value;
+            lowerLimitComparisonResult = Comparer.Compare(in lowerVal, in midValue, dimension);
+        }
+        else
+        {
+            lowerLimitComparisonResult = int.MinValue;
+        }
 
-        if (!lowerLimitComparisonResult.HasValue || lowerLimitComparisonResult <= 0
-            || (dirty && upperLimitComparisonResult == 0))
+        if (lowerLimitComparisonResult <= 0 || (dirty && upperLimitComparisonResult == 0))
         {
             int nextLeftIndex = leftIndex;
             int nextRightIndex = midIndex - 1;

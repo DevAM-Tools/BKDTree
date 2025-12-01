@@ -1,30 +1,32 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 namespace BKDTree;
+
 [DebuggerDisplay("Count: {Count}")]
-public class MetricKDTree<T> : KDTree<T>
+public class MetricKDTree<T, TMetric> : KDTree<T, MetricComparer<T, TMetric>>
+    where T : notnull
+    where TMetric : struct, IDimensionalMetric<T>
 {
-    internal readonly Func<T, int, double> GetDimension;
+    internal readonly TMetric Metric;
 
-    public MetricKDTree(int dimensionCount, IEnumerable<T> values, Func<T, T, int, int> compareDimensionTo, Func<T, int, double> getDimension, bool parallel = false)
-        : this(dimensionCount, values, compareDimensionTo, getDimension, parallel ? Environment.ProcessorCount : 1)
+    public MetricKDTree(int dimensionCount, IEnumerable<T> values, TMetric metric, bool parallel = false)
+        : this(dimensionCount, values, metric, parallel ? Environment.ProcessorCount : 1)
     {
     }
 
-    public MetricKDTree(int dimensionCount, IEnumerable<T> values, Func<T, T, int, int> compareDimensionTo, Func<T, int, double> getDimension, int maxThreadCount)
-        : base(dimensionCount, values, compareDimensionTo, maxThreadCount)
+    public MetricKDTree(int dimensionCount, IEnumerable<T> values, TMetric metric, int maxThreadCount)
+        : base(dimensionCount, values, new MetricComparer<T, TMetric>(metric), maxThreadCount)
     {
-        GetDimension = getDimension
-            ?? throw new ArgumentNullException(nameof(getDimension));
+        Metric = metric;
     }
 
-    internal MetricKDTree(int dimensionCount, IList<Segment<T>> values, Func<T, T, int, int> compareDimensionTo, Func<T, int, double> getDimension, DimensionalComparer<T>[] comparers, int maxThreadCount)
-        : base(dimensionCount, values, compareDimensionTo, comparers, maxThreadCount)
+    internal MetricKDTree(int dimensionCount, IList<Segment<T>> values, TMetric metric, DimensionalComparer<T, MetricComparer<T, TMetric>>[] comparers, int maxThreadCount)
+        : base(dimensionCount, values, new MetricComparer<T, TMetric>(metric), comparers, maxThreadCount)
     {
-        GetDimension = getDimension
-            ?? throw new ArgumentNullException(nameof(getDimension));
+        Metric = metric;
     }
 
     /// <summary>
@@ -43,34 +45,50 @@ public class MetricKDTree<T> : KDTree<T>
         }
 
         Option<T> currentNeighbor = default;
-        double? minSquaredDistance = null;
+        // Use sentinel value instead of nullable to avoid boxing overhead
+        double minSquaredDistance = double.MaxValue;
 
         GetNearestNeighbor(ref value, ref currentNeighbor, ref minSquaredDistance, 0, Count - 1, 0);
 
-        neighbor = currentNeighbor.Value;
-        squaredDistance = minSquaredDistance ?? 0.0;
-        bool result = currentNeighbor.HasValue;
+        // Check HasValue before accessing Value to avoid returning default(T) for empty trees
+        if (currentNeighbor.HasValue)
+        {
+            neighbor = currentNeighbor.Value;
+            squaredDistance = minSquaredDistance;
+            return true;
+        }
 
-        return result;
+        neighbor = default;
+        squaredDistance = 0.0;
+        return false;
     }
 
-    internal void GetNearestNeighbor(ref T value, ref Option<T> neighbor, ref double? minSquaredDistance, int leftIndex, int rightIndex, int dimension)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal void GetNearestNeighbor(ref T value, ref Option<T> neighbor, ref double minSquaredDistance, int leftIndex, int rightIndex, int dimension)
     {
         int midIndex = (rightIndex + leftIndex) / 2;
 
         ref T midValue = ref Values[midIndex];
         bool dirty = Dirties[midIndex];
 
-        double squaredDistance = GetSquaredDistance(ref value, ref midValue, DimensionCount, GetDimension);
+        double squaredDistance = GetSquaredDistance(ref value, ref midValue);
 
-        if (!minSquaredDistance.HasValue || squaredDistance < minSquaredDistance.Value)
+        if (squaredDistance < minSquaredDistance)
         {
             neighbor = midValue;
             minSquaredDistance = squaredDistance;
         }
 
-        int nextDimension = (dimension + 1) % DimensionCount;
-        int comparisonResult = CompareDimensionTo(value, midValue, dimension);
+        int nextDimension = dimension + 1;
+        if (nextDimension >= DimensionCount) nextDimension = 0;
+        
+        // Cache dimension values to avoid repeated delegate calls
+        double midDimValue = Metric.GetDimension(in midValue, dimension);
+        double valueDimValue = Metric.GetDimension(in value, dimension);
+        int comparisonResult = valueDimValue.CompareTo(midDimValue);
+        
+        double axisDiff = midDimValue - valueDimValue;
+        double axisSquaredDistance = axisDiff * axisDiff;
 
         bool wasRight = false;
         bool forceLeft = false;
@@ -87,10 +105,7 @@ public class MetricKDTree<T> : KDTree<T>
                 wasRight = true;
             }
 
-            double limitSquaredDistance = GetDimension(midValue, dimension) - GetDimension(value, dimension);
-            limitSquaredDistance *= limitSquaredDistance;
-
-            if (!minSquaredDistance.HasValue || limitSquaredDistance < minSquaredDistance.Value)
+            if (axisSquaredDistance < minSquaredDistance)
             {
                 forceLeft = true;
             }
@@ -106,35 +121,57 @@ public class MetricKDTree<T> : KDTree<T>
                 GetNearestNeighbor(ref value, ref neighbor, ref minSquaredDistance, nextLeftIndex, nextRightIndex, nextDimension);
             }
 
-            if (!wasRight)
+            if (!wasRight && axisSquaredDistance < minSquaredDistance)
             {
-                double squaredDistanceToLimit = GetDimension(midValue, dimension) - GetDimension(value, dimension);
-                squaredDistanceToLimit *= squaredDistanceToLimit;
+                int nextLeftIdx = midIndex + 1;
+                int nextRightIdx = rightIndex;
 
-                if (!minSquaredDistance.HasValue || squaredDistanceToLimit < minSquaredDistance.Value)
+                if (nextRightIdx >= nextLeftIdx)
                 {
-                    nextLeftIndex = midIndex + 1;
-                    nextRightIndex = rightIndex;
-
-                    if (nextRightIndex >= nextLeftIndex)
-                    {
-                        GetNearestNeighbor(ref value, ref neighbor, ref minSquaredDistance, nextLeftIndex, nextRightIndex, nextDimension);
-                    }
+                    GetNearestNeighbor(ref value, ref neighbor, ref minSquaredDistance, nextLeftIdx, nextRightIdx, nextDimension);
                 }
             }
         }
     }
 
-    public static double GetSquaredDistance(ref T source, ref T target, int dimensionCount, Func<T, int, double> getDimension)
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private double GetSquaredDistance(ref T source, ref T target)
     {
-        double result = 0;
-        for (int dimension = 0; dimension < dimensionCount; dimension++)
+        // Unrolled paths for common dimension counts to avoid loop overhead
+        // JIT can better optimize these fixed-size calculations
+        switch (DimensionCount)
         {
-            double diff = getDimension(target, dimension) - getDimension(source, dimension);
-
-            result += diff * diff;
+            case 2:
+            {
+                double d0 = Metric.GetDimension(in target, 0) - Metric.GetDimension(in source, 0);
+                double d1 = Metric.GetDimension(in target, 1) - Metric.GetDimension(in source, 1);
+                return d0 * d0 + d1 * d1;
+            }
+            case 3:
+            {
+                double d0 = Metric.GetDimension(in target, 0) - Metric.GetDimension(in source, 0);
+                double d1 = Metric.GetDimension(in target, 1) - Metric.GetDimension(in source, 1);
+                double d2 = Metric.GetDimension(in target, 2) - Metric.GetDimension(in source, 2);
+                return d0 * d0 + d1 * d1 + d2 * d2;
+            }
+            case 4:
+            {
+                double d0 = Metric.GetDimension(in target, 0) - Metric.GetDimension(in source, 0);
+                double d1 = Metric.GetDimension(in target, 1) - Metric.GetDimension(in source, 1);
+                double d2 = Metric.GetDimension(in target, 2) - Metric.GetDimension(in source, 2);
+                double d3 = Metric.GetDimension(in target, 3) - Metric.GetDimension(in source, 3);
+                return d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3;
+            }
+            default:
+            {
+                double result = 0;
+                for (int dimension = 0; dimension < DimensionCount; dimension++)
+                {
+                    double diff = Metric.GetDimension(in target, dimension) - Metric.GetDimension(in source, dimension);
+                    result += diff * diff;
+                }
+                return result;
+            }
         }
-
-        return result;
     }
 }

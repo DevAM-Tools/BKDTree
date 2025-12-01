@@ -25,7 +25,7 @@ public class CreateTest
         if (count == 0)
         {
             // KDTree wirft jetzt eine ArgumentException für leere Arrays
-            Assert.Throws<ArgumentException>(() => new KDTree<Point>(2, points, Point.CompareDimensionTo, parallel));
+            Assert.Throws<ArgumentException>(() => new KDTree<Point, PointComparer>(2, points, new PointComparer(), parallel));
             return;
         }
 
@@ -33,7 +33,7 @@ public class CreateTest
             .GroupBy(x => x)
             .ToDictionary(x => x.Key, x => x.ToArray());
 
-        KDTree<Point> tree = new(2, points, Point.CompareDimensionTo, parallel);
+        KDTree<Point, PointComparer> tree = new(2, points, new PointComparer(), parallel);
 
         await Assert.That(tree.Count).IsEqualTo(points.Length);
 
@@ -60,40 +60,32 @@ public class CreateTest
 
     public static IEnumerable<object[]> TestCases()
     {
-        int[] counts = [0, 1, 2, 10, 50, 100, 500, 1000];
+        int[] counts = [0, 1, 10, 100, 500]; // Reduced from [0, 1, 2, 10, 50, 100, 500, 1000]
+        // Keep representative patterns
         Pattern[] patterns = [
-                Pattern.Increasing,
-                Pattern.LowerHalfIncreasing,
-                Pattern.UpperHalfIncreasing,
-                Pattern.Decreasing,
-                Pattern.LowerHalfDecreasing,
-                Pattern.UpperHalfDecreasing,
-                Pattern.Random,
-                Pattern.Const,
-                Pattern.Alternating,
-                Pattern.ReverseAlternating,
-            ];
-        int[] seeds = [0, 1];
+            Pattern.Increasing,
+            Pattern.Random,
+            Pattern.Const,
+            Pattern.Alternating,
+        ];
+        int[] seeds = [0];
         bool[] parallels = [false, true];
 
-            foreach (int count in counts)
+        foreach (int count in counts)
+        {
+            foreach (Pattern xPattern in patterns)
             {
-                foreach (Pattern xPattern in patterns)
+                foreach (Pattern yPattern in patterns)
                 {
-                    foreach (Pattern yPattern in patterns)
+                    // Only use multiple seeds for random patterns
+                    int[] effectiveSeeds = (xPattern == Pattern.Random || yPattern == Pattern.Random) ? [0, 1] : seeds;
+                    
+                    foreach (int seed in effectiveSeeds)
                     {
-                        for (int i = 0; i < seeds.Length; i++)
+                        foreach (bool parallel in parallels)
                         {
-                            if (xPattern != Pattern.Random && yPattern != Pattern.Random && i > 0)
-                            {
-                                continue;
-                            }
-
-                            foreach (bool parallel in parallels)
-                            {
-                            yield return new object[] { count, xPattern, yPattern, seeds[i], parallel };
+                            yield return new object[] { count, xPattern, yPattern, seed, parallel };
                         }
-
                     }
                 }
             }

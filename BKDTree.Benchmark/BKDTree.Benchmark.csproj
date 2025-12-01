@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>disable</Nullable>
     <LangVersion>latest</LangVersion>
     <InvariantGlobalization>true</InvariantGlobalization>
@@ -10,9 +10,9 @@
     <Authors>DevAM</Authors>
     <Company>DevAM</Company>
     <Product>BKDTree</Product>
-    <Version>2.0.0</Version>
-	  <AssemblyVersion>2.0.0</AssemblyVersion>
-	  <FileVersion>2.0.0</FileVersion>
+    <Version>3.0.0</Version>
+	  <AssemblyVersion>3.0.0</AssemblyVersion>
+	  <FileVersion>3.0.0</FileVersion>
     <Copyright>Copyright (c) 2024 DevAM. All Rights Reserved.</Copyright>
   </PropertyGroup>
 
@@ -22,8 +22,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="BenchmarkDotNet" Version="0.15.2" />
-    <PackageReference Include="BenchmarkDotNet.Annotations" Version="0.15.2" />
+    <PackageReference Include="BenchmarkDotNet" Version="0.15.8" />
+    <PackageReference Include="BenchmarkDotNet.Annotations" Version="0.15.8" />
   </ItemGroup>
 
 </Project>

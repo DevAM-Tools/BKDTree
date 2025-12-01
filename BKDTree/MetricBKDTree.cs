@@ -1,29 +1,31 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Runtime.CompilerServices;
 
 namespace BKDTree;
 
 [DebuggerDisplay("Count: {Count}")]
-public class MetricBKDTree<T> : BKDTree<T>
+public class MetricBKDTree<T, TMetric> : BKDTree<T, MetricComparer<T, TMetric>>
+    where T : notnull
+    where TMetric : struct, IDimensionalMetric<T>
 {
-    internal readonly Func<T, int, double> GetDimension;
+    internal readonly TMetric Metric;
 
-    public MetricBKDTree(int dimensionCount, Func<T, T, int, int> compareDimensionTo, Func<T, int, double> getDimension, int blockSize = DefaultBlockSize, bool parallel = false)
-        : this(dimensionCount, compareDimensionTo, getDimension, blockSize, parallel ? Environment.ProcessorCount : 1)
+    public MetricBKDTree(int dimensionCount, TMetric metric, int blockSize = DefaultBlockSize, bool parallel = false)
+        : this(dimensionCount, metric, blockSize, parallel ? Environment.ProcessorCount : 1)
     {
     }
 
-    public MetricBKDTree(int dimensionCount, Func<T, T, int, int> compareDimensionTo, Func<T, int, double> getDimension, int blockSize, int maxThreadCount)
-        : base(dimensionCount, compareDimensionTo, blockSize, maxThreadCount)
+    public MetricBKDTree(int dimensionCount, TMetric metric, int blockSize, int maxThreadCount)
+        : base(dimensionCount, new MetricComparer<T, TMetric>(metric), blockSize, maxThreadCount)
     {
-        GetDimension = getDimension
-            ?? throw new ArgumentNullException(nameof(getDimension));
+        Metric = metric;
     }
 
-    internal override KDTree<T> CreateNewTree(IList<Segment<T>> values)
+    internal override KDTree<T, MetricComparer<T, TMetric>> CreateNewTree(IList<Segment<T>> values)
     {
-        KDTree<T> result = new MetricKDTree<T>(DimensionCount, values, CompareDimensionTo, GetDimension, Comparers, MaxThreadCount);
+        KDTree<T, MetricComparer<T, TMetric>> result = new MetricKDTree<T, TMetric>(DimensionCount, values, Metric, Comparers, MaxThreadCount);
         return result;
     }
 
@@ -43,15 +45,16 @@ public class MetricBKDTree<T> : BKDTree<T>
         }
 
         Option<T> currentNeighbor = default;
-        double? minSquaredDistance = null;
+        // Use sentinel value instead of nullable to avoid boxing overhead
+        double minSquaredDistance = double.MaxValue;
 
         for (int i = 0; i < BaseBlockCount; i++)
         {
             ref T currentValue = ref BaseBlock[i];
 
-            double distance = MetricKDTree<T>.GetSquaredDistance(ref value, ref currentValue, DimensionCount, GetDimension);
+            double distance = GetSquaredDistance(ref value, ref currentValue);
 
-            if (!minSquaredDistance.HasValue || distance < minSquaredDistance.Value)
+            if (distance < minSquaredDistance)
             {
                 currentNeighbor = currentValue;
                 minSquaredDistance = distance;
@@ -60,15 +63,62 @@ public class MetricBKDTree<T> : BKDTree<T>
 
         for (int i = 0; i < Trees.Length; i++)
         {
-            MetricKDTree<T> tree = Trees[i] as MetricKDTree<T>;
+            MetricKDTree<T, TMetric> tree = Trees[i] as MetricKDTree<T, TMetric>;
 
             tree?.GetNearestNeighbor(ref value, ref currentNeighbor, ref minSquaredDistance, 0, tree.Count - 1, 0);
         }
 
-        neighbor = currentNeighbor.Value;
-        squaredDistance = minSquaredDistance ?? 0.0;
-        bool result = currentNeighbor.HasValue;
+        // Check HasValue before accessing Value to avoid returning default(T) for empty trees
+        if (currentNeighbor.HasValue)
+        {
+            neighbor = currentNeighbor.Value;
+            squaredDistance = minSquaredDistance;
+            return true;
+        }
 
-        return result;
+        neighbor = default;
+        squaredDistance = 0.0;
+        return false;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private double GetSquaredDistance(ref T source, ref T target)
+    {
+        // Unrolled paths for common dimension counts to avoid loop overhead
+        // JIT can better optimize these fixed-size calculations
+        switch (DimensionCount)
+        {
+            case 2:
+            {
+                double d0 = Metric.GetDimension(in target, 0) - Metric.GetDimension(in source, 0);
+                double d1 = Metric.GetDimension(in target, 1) - Metric.GetDimension(in source, 1);
+                return d0 * d0 + d1 * d1;
+            }
+            case 3:
+            {
+                double d0 = Metric.GetDimension(in target, 0) - Metric.GetDimension(in source, 0);
+                double d1 = Metric.GetDimension(in target, 1) - Metric.GetDimension(in source, 1);
+                double d2 = Metric.GetDimension(in target, 2) - Metric.GetDimension(in source, 2);
+                return d0 * d0 + d1 * d1 + d2 * d2;
+            }
+            case 4:
+            {
+                double d0 = Metric.GetDimension(in target, 0) - Metric.GetDimension(in source, 0);
+                double d1 = Metric.GetDimension(in target, 1) - Metric.GetDimension(in source, 1);
+                double d2 = Metric.GetDimension(in target, 2) - Metric.GetDimension(in source, 2);
+                double d3 = Metric.GetDimension(in target, 3) - Metric.GetDimension(in source, 3);
+                return d0 * d0 + d1 * d1 + d2 * d2 + d3 * d3;
+            }
+            default:
+            {
+                double result = 0;
+                for (int dimension = 0; dimension < DimensionCount; dimension++)
+                {
+                    double diff = Metric.GetDimension(in target, dimension) - Metric.GetDimension(in source, dimension);
+                    result += diff * diff;
+                }
+                return result;
+            }
+        }
     }
 }

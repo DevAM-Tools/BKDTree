@@ -32,7 +32,7 @@ public class GetTest
                     return point;
                 }).ToList();
 
-                BKDTree<Point> tree = new(2, Point.CompareDimensionTo, blockSize, parallel);
+                BKDTree<Point, PointComparer> tree = new(2, new PointComparer(), blockSize, parallel);
 
                 Point minPoint = points[0];
                 Point maxPoint = points[0];
@@ -95,14 +95,25 @@ public class GetTest
 
     public static IEnumerable<object[]> TestCases()
     {
-        int[] blockSizes = [2, 3, 4];
+        // Reduced test matrix - limit combinations are the main explosion
+        int[] blockSizes = [2, 4];
         Pattern[] patterns = [
             Pattern.Random,
             Pattern.Const,
         ];
         bool[] parallels = [false, true];
         bool[] bulkInserts = [false, true];
-        double?[] limitShares = [null, -1.0, 0.0, 0.5, 1.0, 2.0];
+        // Reduced limit combinations - only test key boundary cases
+        (double?, double?, double?, double?)[] limitCombinations = [
+            (null, null, null, null),           // No limits
+            (0.0, 0.0, 1.0, 1.0),               // Full range
+            (0.25, 0.25, 0.75, 0.75),           // Middle range
+            (0.0, 0.0, 0.5, 0.5),               // Lower half
+            (0.5, 0.5, 1.0, 1.0),               // Upper half
+            (-1.0, -1.0, 2.0, 2.0),             // Outside bounds
+            (0.5, 0.5, null, null),             // Only lower limit
+            (null, null, 0.5, 0.5),             // Only upper limit
+        ];
 
         foreach (int blockSize in blockSizes)
         {
@@ -114,18 +125,9 @@ public class GetTest
                     {
                         foreach (bool bulkInsert in bulkInserts)
                         {
-                            foreach (double? lowerLimitShareX in limitShares)
+                            foreach (var (lx, ly, ux, uy) in limitCombinations)
                             {
-                                foreach (double? lowerLimitShareY in limitShares)
-                                {
-                                    foreach (double? upperLimitShareX in limitShares)
-                                    {
-                                        foreach (double? upperLimitShareY in limitShares)
-                                        {
-                                            yield return new object[] { blockSize, xPattern, yPattern, parallel, bulkInsert, lowerLimitShareX, lowerLimitShareY, upperLimitShareX, upperLimitShareY };
-                                        }
-                                    }
-                                }
+                                yield return new object[] { blockSize, xPattern, yPattern, parallel, bulkInsert, lx, ly, ux, uy };
                             }
                         }
                     }

@@ -6,30 +6,6 @@ namespace BKDTree.Test;
 
 public readonly record struct Point(double X, double Y)
 {
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static int CompareDimensionTo(Point left, Point right, int dimension)
-    {
-        int result = dimension switch
-        {
-            0 => left.X < right.X ? -1 : left.X > right.X ? 1 : 0,
-            1 => left.Y < right.Y ? -1 : left.Y > right.Y ? 1 : 0,
-            _ => throw new ArgumentOutOfRangeException(nameof(dimension))
-        };
-        return result;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public static double GetDimension(Point point, int dimension)
-    {
-        double result = dimension switch
-        {
-            0 => point.X,
-            1 => point.Y,
-            _ => throw new ArgumentOutOfRangeException(nameof(dimension))
-        };
-        return result;
-    }
-
     public static double GenerateValue(Pattern pattern, int value, int count, Random random)
     {
         int half = count / 2;
@@ -47,5 +23,41 @@ public readonly record struct Point(double X, double Y)
             _ => 0
         };
         return result;
+    }
+}
+
+/// <summary>
+/// Struct-based comparer for Point that implements IDimensionalComparer.
+/// Using a struct enables the JIT to inline comparison calls.
+/// </summary>
+public readonly struct PointComparer : IDimensionalComparer<Point>
+{
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public int Compare(in Point left, in Point right, int dimension)
+    {
+        return dimension switch
+        {
+            0 => left.X < right.X ? -1 : left.X > right.X ? 1 : 0,
+            1 => left.Y < right.Y ? -1 : left.Y > right.Y ? 1 : 0,
+            _ => throw new ArgumentOutOfRangeException(nameof(dimension))
+        };
+    }
+}
+
+/// <summary>
+/// Struct-based metric for Point that implements IDimensionalMetric.
+/// Using a struct enables the JIT to inline dimension access calls.
+/// </summary>
+public readonly struct PointMetric : IDimensionalMetric<Point>
+{
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public double GetDimension(in Point value, int dimension)
+    {
+        return dimension switch
+        {
+            0 => value.X,
+            1 => value.Y,
+            _ => throw new ArgumentOutOfRangeException(nameof(dimension))
+        };
     }
 }

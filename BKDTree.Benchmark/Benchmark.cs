@@ -20,9 +20,9 @@ public class Benchmark
 
     public Point[] Points { get; set; }
 
-    public KDTree<Point> KDTree { get; set; }
+    public KDTree<Point, PointComparer> KDTree { get; set; }
 
-    public BKDTree<Point> BKDTree { get; set; }
+    public BKDTree<Point, PointComparer> BKDTree { get; set; }
 
     public Random Random { get; set; }
 
@@ -47,9 +47,9 @@ public class Benchmark
             return point;
         }).ToArray();
 
-        KDTree = new(2, Points, Point.CompareDimensionTo, true);
+        KDTree = new(2, Points, new PointComparer(), true);
 
-        BKDTree = new(2, Point.CompareDimensionTo, BlockSize, true);
+        BKDTree = new(2, new PointComparer(), BlockSize, true);
 
         foreach (Point point in Points)
         {
@@ -60,19 +60,19 @@ public class Benchmark
     [Benchmark(Baseline = true)]
     public void CreateKd()
     {
-        KDTree<Point> kdTree = new(2, Points, Point.CompareDimensionTo, false);
+        KDTree<Point, PointComparer> kdTree = new(2, Points, new PointComparer(), false);
     }
 
     [Benchmark]
     public void CreateKdParallel()
     {
-        KDTree<Point> kdTree = new(2, Points, Point.CompareDimensionTo, true);
+        KDTree<Point, PointComparer> kdTree = new(2, Points, new PointComparer(), true);
     }
 
     [Benchmark]
     public void CreateBkd()
     {
-        BKDTree<Point> bkdTree = new(2, Point.CompareDimensionTo, BlockSize, false);
+        BKDTree<Point, PointComparer> bkdTree = new(2, new PointComparer(), BlockSize, false);
         foreach (Point point in Points)
         {
             bkdTree.Insert(point);
@@ -82,7 +82,7 @@ public class Benchmark
     [Benchmark]
     public void CreateBkdParallel()
     {
-        BKDTree<Point> bkdTree = new(2, Point.CompareDimensionTo, BlockSize, true);
+        BKDTree<Point, PointComparer> bkdTree = new(2, new PointComparer(), BlockSize, true);
         foreach (Point point in Points)
         {
             bkdTree.Insert(point);

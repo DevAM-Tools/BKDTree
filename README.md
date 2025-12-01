@@ -2,16 +2,16 @@
 
 BKDTree offers a simple and high performant implementation of a growing only `BKDTree<T>` and a static `KDTree<T>` for C# and .NET. 
 
-A BKDTree and an KDTree allow storing any queying of multidimensional data. Non of these support a method for removing items.
+A BKDTree and an KDTree allow storing and querying of multidimensional data. None of these support a method for removing items.
 
-For nearest neighbor queries there are dedicated variants like `MetricBKDTree<T>` and `MetricKDTree<T>`. As nearest neighbor queries require to calculate euclidean distance between values `T` must implement `IMetricTreeItem<in T>`.
+For nearest neighbor queries there are dedicated variants like `MetricBKDTree<T, TMetric>` and `MetricKDTree<T, TMetric>`. These only require a `TMetric` struct implementing `IDimensionalMetric<T>` which provides `double GetDimension(in T value, int dimension)`. The comparison is derived automatically from the metric values.
 
 ![icon](https://raw.githubusercontent.com/DevAM-Tools/BKDTree/main/icon.png)
 
 ## Usage
-`BKDTree<T>` or a `KDTree<T>` require a method `int CompareDimensionTo(T left, T right, int dimension)` for yout specific type `T`.
+`BKDTree<T, TComparer>` or `KDTree<T, TComparer>` require a struct implementing `IDimensionalComparer<T>` with `int Compare(in T left, in T right, int dimension)`.
 
-`MetricBKDTree<T>` and `MetricKDTree<T>` support nearest neighbor queries. Therefore a method `double GetDimension(T item, int dimension)` for the calculation of euclidean distances between values is required.
+`MetricBKDTree<T, TMetric>` and `MetricKDTree<T, TMetric>` support nearest neighbor queries and only require `IDimensionalMetric<T>` with `double GetDimension(in T value, int dimension)` for calculating euclidean distances. The comparison is automatically derived from the metric values.
 
 ## Contribution
 
